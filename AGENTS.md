@@ -1,87 +1,70 @@
 # AGENTS.md
 
-This file provides guidance to Codex (Codex.ai/code) when working with code in this repository.
+This file provides guidance to Codex when working in this repository.
 
-## What is HushScribe
+## What is noted
 
-HushScribe is a macOS menu bar app (Apple Silicon only, macOS 26+) that transcribes meetings and voice memos entirely on-device. No audio or data leaves the machine. Output is Obsidian-compatible `.md` files with YAML frontmatter. The bundle identifier is `com.drcursor.hushscribe`.
+`noted` is the macOS menubar capture agent for the Meeting Intelligence System. It is Apple Silicon only, targets macOS 26+, captures microphone and system audio locally, transcribes on device, diarizes after recording, and writes session artefacts for later ingestion by `briefing`.
+
+`noted` must remain a runtime agent. It does not read calendars, generate summaries, write Obsidian notes, or decide which meetings should be recorded.
 
 ## Build Commands
 
 All commands run from the repo root.
 
 ```bash
-# Dev build (debug)
+# Dev build
 cd HushScribe && swift build
 
-# Release build → signed .app + .dmg in dist/
-./scripts/release.sh test        # local only, skips notarization
-
-# Full release (build + notarize + GH release + cask update)
-./scripts/release.sh
+# Local app bundle build, skips notarization
+./scripts/release.sh test
 
 # Bump version in Info.plist
-./scripts/bump_version.sh patch   # or minor | major | 2.5.0
+./scripts/bump_version.sh patch   # or minor | major | 0.2.0
 
-# Reset user defaults (useful when testing)
-defaults delete com.drcursor.hushscribe
+# Reset user defaults
+defaults delete app.noted.macos
 ```
 
 There are no unit tests in the project currently.
 
 ## Project Layout
 
-The Swift package lives in `HushScribe/` (the inner directory). `Package.swift` is at `HushScribe/Package.swift`; sources are under `HushScribe/Sources/HushScribe/`.
+The Swift package lives in `HushScribe/` for now because that path was inherited from HushScribe. The package and executable are named `Noted`.
 
 ```
 HushScribe/Sources/HushScribe/
-├── App/                  # App entry point, menu bar (StatusBarController)
-├── Audio/                # MicCapture (AVAudioEngine), SystemAudioCapture (ScreenCaptureKit)
-├── Models/               # Domain types, RecordingState, SummaryModel, TranscriptStore
-├── Services/             # LLMSummaryEngine (MLX), MeetingMonitor, SummaryService (Apple NL)
-├── Settings/             # AppSettings — all config via UserDefaults
-├── Storage/              # SessionStore, TranscriptLogger (.md writer)
-├── Transcription/        # ASRBackend protocol + FluidAudio/WhisperKit/SFSpeech backends
-└── Views/                # SwiftUI views (ContentView, Settings, Onboarding, etc.)
+├── App/                  # App entry, session controller, status item
+├── Audio/                # MicCapture, SystemAudioCapture
+├── Models/               # Domain types and recording state
+├── Settings/             # AppSettings
+├── Storage/              # SessionStore and TranscriptLogger
+├── Transcription/        # ASRBackend + FluidAudio/WhisperKit/SFSpeech backends
+└── Views/                # Minimal settings view
 ```
 
-Other top-level directories:
-- `scripts/` — build, release, and version-bump scripts
-- `Casks/` — Homebrew cask formula (`hushscribe.rb`)
-- `docs/` — GitHub Pages site and planning documents
-- `assets/` — screenshots and icons
+Archived HushScribe source and website files live locally under ignored `archive/hushscribe-strip/`.
 
 ## Architecture Notes
 
-- **Menu bar app.** `LSUIElement = true` — no dock icon. `StatusBarController` owns the menu bar item. The main window opens from the menu bar and hides itself after onboarding.
-- **Dual audio streams.** `TranscriptionEngine` orchestrates `MicCapture` (your mic) and `SystemAudioCapture` (remote participants via ScreenCaptureKit, filtered to the active conferencing app). Each stream feeds its own `StreamingTranscriber`.
-- **ASR pipeline.** `StreamingTranscriber` runs VAD (Silero via FluidAudio) then the selected `ASRBackend`. The `ASRBackend` protocol has three implementations: `FluidAudioASRBackend` (Parakeet-TDT v3, default), `WhisperKitBackend`, and `SFSpeechBackend`.
-- **Post-session diarization.** After recording stops, `OfflineDiarizerManager` (FluidAudio) splits system audio into labelled speakers. `SpeakerNamingView` lets the user assign real names.
-- **LLM summaries.** `LLMSummaryEngine` uses mlx-swift-lm to run Qwen3 or Gemma 3 on-device. Models are downloaded on demand and cached in `~/Library/Caches/models/`. `SummaryService` handles the Apple NaturalLanguage fallback.
-- **Settings.** All persisted via `UserDefaults` through `AppSettings` (`@Observable`). No Core Data, no SQLite.
-- **Output.** `TranscriptLogger` writes `.md` files with YAML frontmatter (`type`, `created`, `duration`, `source_app`, `attendees`, `tags`) to user-configured vault paths (default `~/Documents/HushScribe/{Meetings,Voice}`).
+- **Menubar app.** `LSUIElement = true`; launching should create only a menubar icon.
+- **Manual baseline sessions.** Step 4 supports manual start/stop from the menubar. CLI, manifest loading, runtime status, completion files, and end-of-meeting popup come later.
+- **Dual audio streams.** `TranscriptionEngine` owns `MicCapture` and `SystemAudioCapture`. Each stream feeds a `StreamingTranscriber`.
+- **ASR pipeline.** `StreamingTranscriber` runs FluidAudio VAD and then the selected `ASRBackend`.
+- **Post-session diarization.** `OfflineDiarizerManager` runs after stop against buffered system audio and writes `diarization.json` when successful.
+- **Settings.** Persisted through `UserDefaults` until the TOML settings contract is implemented later.
+- **Output.** Current baseline output is a session directory with raw WAV audio, `session.json`, `transcript.txt`, `segments.json`, and optionally `diarization.json`.
 
-## Dependencies (Swift Package Manager)
+## Dependencies
 
 | Package | Purpose |
-|---|---|
-| FluidAudio | Parakeet-TDT v3 ASR, Silero VAD, offline speaker diarization |
+| --- | --- |
+| FluidAudio | Parakeet-TDT ASR, Silero VAD, offline diarization |
 | WhisperKit | Whisper Base / Large v3 ASR |
-| mlx-swift-lm | On-device LLM inference (Qwen3, Gemma 3) via Apple MLX |
-
-FluidAudio and mlx-swift-lm are pinned to specific revisions; WhisperKit uses semver (`from: "0.9.0"`).
-
-## Release Workflow
-
-1. `./scripts/bump_version.sh <patch|minor|major>` — updates `Info.plist`
-2. Update `CHANGELOG.md` with the new version entry
-3. Commit and push
-4. `./scripts/release.sh` — builds release binary, compiles MLX Metal shaders, creates signed `.app` + `.dmg`, notarizes, creates GH release with changelog notes, updates the Homebrew cask SHA and version
 
 ## Key Conventions
 
-- Swift 6.2 with strict concurrency. `@MainActor` is used throughout — `AppSettings`, `TranscriptStore`, `RecordingState`, and all views are main-actor-isolated.
-- The `@Observable` macro (Observation framework) is used instead of `ObservableObject`/`@Published`.
-- No Xcode project — pure Swift Package Manager. Build via `swift build` from `HushScribe/`.
-- Version is stored only in `Info.plist` (`CFBundleShortVersionString` and `CFBundleVersion`). Use `bump_version.sh` to change it.
-- The app is code-signed with a Developer ID certificate and notarized via `notarytool` with a stored keychain profile named "HushScribe".
+- Swift 6.2 with strict concurrency.
+- The `@Observable` macro is used instead of `ObservableObject`/`@Published`.
+- No Xcode project; build with Swift Package Manager from `HushScribe/`.
+- Version is stored in `Info.plist`.

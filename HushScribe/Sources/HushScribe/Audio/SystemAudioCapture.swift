@@ -6,7 +6,6 @@ import os
 final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate, SCStreamOutput {
     private let _stream = OSAllocatedUnfairLock<SCStream?>(uncheckedState: nil)
     private let _sysContinuation = OSAllocatedUnfairLock<AsyncStream<AVAudioPCMBuffer>.Continuation?>(uncheckedState: nil)
-    private let _micContinuation = OSAllocatedUnfairLock<AsyncStream<AVAudioPCMBuffer>.Continuation?>(uncheckedState: nil)
     private let _audioLevel = AudioLevel()
     private let _paused = OSAllocatedUnfairLock<Bool>(uncheckedState: false)
     private let _muted = OSAllocatedUnfairLock<Bool>(uncheckedState: false)
@@ -17,7 +16,6 @@ final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate,
         set { _muted.withLock { $0 = newValue }; if newValue { _audioLevel.value = 0 } }
     }
 
-    // Temp WAV for diarization
     private let _bufferFilePath = OSAllocatedUnfairLock<URL?>(uncheckedState: nil)
     var bufferFilePath: URL? { _bufferFilePath.withLock { $0 } }
 
@@ -28,7 +26,7 @@ final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate,
     }
 
     /// Start capturing system audio. Pass a bundle ID to filter to a specific app.
-    func bufferStream(appBundleID: String? = nil) async throws -> CaptureStreams {
+    func bufferStream(appBundleID: String? = nil, rawAudioURL: URL? = nil) async throws -> CaptureStreams {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
 
         guard let display = content.displays.first else {
@@ -48,9 +46,7 @@ final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate,
             filter = SCContentFilter(display: display, excludingWindows: [])
         }
 
-        // Set up audio buffer file for post-session diarization
-        let bufferURL = FileManager.default.temporaryDirectory.appendingPathComponent("hushscribe_sys_audio_\(UUID().uuidString).wav")
-        _bufferFilePath.withLock { $0 = bufferURL }
+        _bufferFilePath.withLock { $0 = rawAudioURL }
         _audioFileWriter.withLock { $0 = nil } // will be created on first audio callback
 
         let config = SCStreamConfiguration()
@@ -94,14 +90,6 @@ final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate,
         _audioLevel.value = 0
     }
 
-    /// Remove the buffered audio file after diarization is complete
-    func cleanupBufferFile() {
-        if let path = _bufferFilePath.withLock({ $0 }) {
-            try? FileManager.default.removeItem(at: path)
-        }
-        _bufferFilePath.withLock { $0 = nil }
-    }
-
     // MARK: - SCStreamOutput
 
     private let _sampleCount = OSAllocatedUnfairLock<Int>(uncheckedState: 0)
@@ -139,7 +127,7 @@ final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate,
             diagLog("[SYS-RAW] #\(count) frames=\(frameCount) sr=\(asbd.mSampleRate) ch=\(asbd.mChannelsPerFrame) rms=\(rms)")
         }
 
-        // Buffer audio to disk for post-session diarization
+        // Persist raw system audio for retention and post-session diarization.
         let sampleRate = asbd.mSampleRate
         _audioFileWriter.withLock { writer in
             if writer == nil, let bufferPath = self._bufferFilePath.withLock({ $0 }) {

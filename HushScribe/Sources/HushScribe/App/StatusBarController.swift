@@ -1,281 +1,72 @@
 import AppKit
+import Observation
 import SwiftUI
 
-/// Manages the status bar item and handles both standard (menu) and attached (popover) modes.
 @MainActor
 final class StatusBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
-    private var popover: NSPopover?
-    private var autoDetectDotView: NSView?
-    private var closePopoverObserver: Any?
-    private var openSettingsAction: (() -> Void)?
-    private weak var mainWindow: NSWindow?
+    private var settingsWindow: NSWindow?
+    private var statusWindow: NSWindow?
 
-    func setOpenSettings(_ action: @escaping () -> Void) {
-        openSettingsAction = action
-    }
-
-    // State references — set once in setup()
     private var settings: AppSettings?
     private var recordingState: RecordingState?
-    private var meetingMonitor: MeetingMonitor?
-    private var transcriptStore: TranscriptStore?
-    private var transcriptionEngine: TranscriptionEngine?
+    private var sessionController: SessionController?
 
     func setup(
         settings: AppSettings,
         recordingState: RecordingState,
-        meetingMonitor: MeetingMonitor,
-        transcriptStore: TranscriptStore,
-        transcriptionEngine: TranscriptionEngine
+        sessionController: SessionController
     ) {
         guard statusItem == nil else { return }
-
         self.settings = settings
         self.recordingState = recordingState
-        self.meetingMonitor = meetingMonitor
-        self.transcriptStore = transcriptStore
-        self.transcriptionEngine = transcriptionEngine
+        self.sessionController = sessionController
 
-        mainWindow = NSApp.keyWindow ?? NSApp.windows.first(where: { !($0 is NSPanel) && $0.level == .normal })
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        item.menu = NSMenu()
+        item.menu?.delegate = self
+        statusItem = item
+
         updateIcon()
-        applyMode(settings.mainWindowMode)
-
-        closePopoverObserver = NotificationCenter.default.addObserver(
-            forName: .hushscribeClosePopover,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.popover?.performClose(nil)
-            }
-        }
-
-        NotificationCenter.default.addObserver(
-            forName: .hushscribeShowOnboarding,
-            object: nil,
-            queue: .main
-        ) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.showMainWindow()
-            }
-        }
-
-        NotificationCenter.default.addObserver(
-            forName: NSWindow.willCloseNotification,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let window = notification.object as? NSWindow else { return }
-            Task { @MainActor [weak self] in
-                guard let self,
-                      window === self.mainWindow,
-                      self.settings?.mainWindowMode == .detached else { return }
-                self.settings?.mainWindowMode = .attached
-            }
-        }
-
         observeIcon()
-        observeMode()
     }
-
-    func updateIcon() {
-        guard let button = statusItem?.button else { return }
-
-        let iconSize = NSSize(width: 18, height: 18)
-        if let svgURL = Bundle.main.url(forResource: "logo", withExtension: "svg"),
-           let svgImage = NSImage(contentsOf: svgURL) {
-            svgImage.size = iconSize
-            if recordingState?.isPaused == true {
-                button.image = logoTinted(svgImage, color: .systemOrange)
-            } else if recordingState?.isRecording == true {
-                button.image = logoTinted(svgImage, color: .systemRed)
-            } else {
-                svgImage.isTemplate = true
-                button.image = svgImage
-            }
-        } else {
-            // Fallback to SF Symbols if logo.svg is unavailable
-            let name: String
-            if recordingState?.isPaused == true {
-                name = "pause.circle.fill"
-            } else if recordingState?.isRecording == true {
-                name = "record.circle.fill"
-            } else {
-                name = "quote.bubble"
-            }
-            button.image = NSImage(systemSymbolName: name, accessibilityDescription: nil)
-        }
-
-        updateAutoDetectDot(on: button)
-    }
-
-    private func updateAutoDetectDot(on button: NSButton) {
-        if settings?.autoMeetingDetect == true {
-            if autoDetectDotView == nil {
-                let dotSize: CGFloat = 5
-                let dot = NSView(frame: NSRect(
-                    x: button.bounds.width - dotSize - 0.5,
-                    y: 0.5,
-                    width: dotSize,
-                    height: dotSize
-                ))
-                dot.wantsLayer = true
-                dot.layer?.backgroundColor = NSColor.white.cgColor
-                dot.layer?.cornerRadius = dotSize / 2
-                dot.autoresizingMask = [.minXMargin, .minYMargin]
-                button.addSubview(dot)
-                autoDetectDotView = dot
-            }
-        } else {
-            autoDetectDotView?.removeFromSuperview()
-            autoDetectDotView = nil
-        }
-    }
-
-    private func logoTinted(_ image: NSImage, color: NSColor) -> NSImage {
-        let result = NSImage(size: image.size)
-        result.lockFocus()
-        image.draw(in: NSRect(origin: .zero, size: image.size))
-        color.withAlphaComponent(0.85).setFill()
-        NSRect(origin: .zero, size: image.size).fill(using: .sourceAtop)
-        result.unlockFocus()
-        return result
-    }
-
-    private func applyMode(_ mode: MainWindowMode) {
-        guard let statusItem else { return }
-        switch mode {
-        case .attached:
-            statusItem.menu = nil
-            statusItem.button?.target = self
-            statusItem.button?.action = #selector(statusButtonClicked)
-        case .detached:
-            statusItem.button?.action = nil
-            statusItem.button?.target = nil
-            let menu = NSMenu()
-            menu.delegate = self
-            statusItem.menu = menu
-            popover?.performClose(nil)
-            popover = nil
-        }
-    }
-
-    private func showMainWindow() {
-        NSApp.setActivationPolicy(.regular)
-        mainWindow?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private func hideMainWindow() {
-        mainWindow?.orderOut(nil)
-        NSApp.setActivationPolicy(.accessory)
-    }
-
-    private var onboardingComplete: Bool {
-        UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
-    }
-
-    @objc private func statusButtonClicked() {
-        guard onboardingComplete else { return }
-        guard let button = statusItem?.button else { return }
-        if let popover, popover.isShown {
-            popover.performClose(nil)
-        } else {
-            openPopover(relativeTo: button)
-        }
-    }
-
-    private func openPopover(relativeTo button: NSButton) {
-        guard let settings, let recordingState, let transcriptStore, let transcriptionEngine else { return }
-
-        if popover == nil {
-            guard let meetingMonitor else { return }
-            let contentView = ContentView(
-                settings: settings,
-                recordingState: recordingState,
-                transcriptStore: transcriptStore,
-                transcriptionEngine: transcriptionEngine,
-                meetingMonitor: meetingMonitor,
-                openSettingsOverride: { [weak self] in
-                    guard let self else { return }
-                    let action = self.openSettingsAction
-                    self.popover?.performClose(nil)
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-                        action?()
-                        NSApp.activate(ignoringOtherApps: true)
-                    }
-                }
-            )
-            let hosting = NSHostingController(rootView: contentView)
-            hosting.sizingOptions = []
-            let p = NSPopover()
-            p.contentSize = NSSize(width: 480, height: 460)
-            p.contentViewController = hosting
-            p.behavior = .transient
-            popover = p
-        }
-
-        popover?.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    // MARK: - NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
         menu.removeAllItems()
-        guard onboardingComplete else { return }
         buildMenuItems(into: menu)
     }
 
     private func buildMenuItems(into menu: NSMenu) {
-        guard let settings, let recordingState, let meetingMonitor else { return }
+        guard let recordingState else { return }
 
-        let title = NSMenuItem(title: "HushScribe", action: nil, keyEquivalent: "")
+        let title = NSMenuItem(title: "noted", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
+
+        let state = NSMenuItem(title: "Status: \(recordingState.phase.menuTitle)", action: nil, keyEquivalent: "")
+        state.isEnabled = false
+        menu.addItem(state)
         menu.addItem(.separator())
 
-        menu.addItem(makeItem("Show HushScribe", action: #selector(showHushScribe)))
-        menu.addItem(makeItem("Hide HushScribe", action: #selector(hideHushScribe)))
-        menu.addItem(.separator())
-
-        if !recordingState.isRecording {
-            menu.addItem(makeItem("Start Call Capture", action: #selector(startCallCapture)))
-            menu.addItem(makeItem("Start Voice Memo", action: #selector(startVoiceMemo)))
+        if recordingState.isRecording {
+            menu.addItem(makeItem("Stop", action: #selector(stopRecording)))
         } else {
-            if recordingState.isPaused {
-                menu.addItem(makeItem("Resume Recording", action: #selector(resumeRecording)))
-            } else {
-                menu.addItem(makeItem("Pause Recording", action: #selector(pauseRecording)))
-            }
-            menu.addItem(makeItem("Stop Recording", action: #selector(stopRecording)))
+            let start = makeItem("Start", action: #selector(startRecording))
+            start.isEnabled = !recordingState.isBusy
+            menu.addItem(start)
         }
+
+        menu.addItem(makeItem("Status", action: #selector(showStatus)))
         menu.addItem(.separator())
 
-        let autoItem = makeItem("Auto-record meetings", action: #selector(toggleAutoMeetings))
-        autoItem.state = settings.autoMeetingDetect ? .on : .off
-        menu.addItem(autoItem)
-        if settings.autoMeetingDetect && meetingMonitor.isMeetingActive {
-            let detectedItem = NSMenuItem(title: "Meeting detected", action: nil, keyEquivalent: "")
-            detectedItem.isEnabled = false
-            menu.addItem(detectedItem)
-        }
-        menu.addItem(.separator())
-
-        menu.addItem(makeItem("Transcript Viewer…", action: #selector(openTranscriptViewer)))
-        menu.addItem(.separator())
-
-        let settingsItem = makeItem("Settings...", action: #selector(openSettingsMenu))
+        let settingsItem = makeItem("Settings...", action: #selector(showSettings))
         settingsItem.keyEquivalent = ","
         menu.addItem(settingsItem)
 
         menu.addItem(.separator())
-
-        let quitItem = makeItem("Quit HushScribe", action: #selector(quitApp))
-        quitItem.keyEquivalent = "q"
-        menu.addItem(quitItem)
+        let quit = makeItem("Quit noted", action: #selector(quitApp))
+        quit.keyEquivalent = "q"
+        menu.addItem(quit)
     }
 
     private func makeItem(_ title: String, action: Selector) -> NSMenuItem {
@@ -284,65 +75,26 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         return item
     }
 
-    // MARK: - Menu Actions
-
-    @objc private func showHushScribe() {
-        NSApp.setActivationPolicy(.regular)
-        if let existing = NSApp.windows.first(where: { !($0 is NSPanel) && $0.level == .normal }) {
-            existing.makeKeyAndOrderFront(nil)
+    private func updateIcon() {
+        guard let button = statusItem?.button else { return }
+        let symbol: String
+        switch recordingState?.phase ?? .idle {
+        case .idle:
+            symbol = "waveform"
+        case .starting, .recording:
+            symbol = "record.circle.fill"
+        case .stopping, .processing:
+            symbol = "gearshape.2.fill"
+        case .failed:
+            symbol = "exclamationmark.triangle.fill"
         }
-        NSApp.activate(ignoringOtherApps: true)
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "noted")
+        button.image?.isTemplate = recordingState?.phase != .recording
     }
-
-    @objc private func hideHushScribe() {
-        NSApp.windows.first { $0.isVisible && !($0 is NSPanel) && $0.level == .normal }?.orderOut(nil)
-        NSApp.setActivationPolicy(.accessory)
-    }
-
-    @objc private func startCallCapture() {
-        NotificationCenter.default.post(name: .hushscribeStartCallCapture, object: nil)
-    }
-
-    @objc private func startVoiceMemo() {
-        NotificationCenter.default.post(name: .hushscribeStartVoiceMemo, object: nil)
-    }
-
-    @objc private func pauseRecording() {
-        NotificationCenter.default.post(name: .hushscribePauseRecording, object: nil)
-    }
-
-    @objc private func resumeRecording() {
-        NotificationCenter.default.post(name: .hushscribeResumeRecording, object: nil)
-    }
-
-    @objc private func stopRecording() {
-        NotificationCenter.default.post(name: .hushscribeStopRecording, object: nil)
-    }
-
-    @objc private func toggleAutoMeetings() {
-        settings?.autoMeetingDetect.toggle()
-    }
-
-    @objc private func openTranscriptViewer() {
-        NotificationCenter.default.post(name: .hushscribeOpenSummarize, object: nil)
-    }
-
-    @objc private func openSettingsMenu() {
-        openSettingsAction?()
-        NSApp.activate(ignoringOtherApps: true)
-    }
-
-    @objc private func quitApp() {
-        NSApplication.shared.terminate(nil)
-    }
-
-    // MARK: - Observation
 
     private func observeIcon() {
         withObservationTracking {
-            _ = recordingState?.isRecording
-            _ = recordingState?.isPaused
-            _ = settings?.autoMeetingDetect
+            _ = recordingState?.phase
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.updateIcon()
@@ -351,19 +103,81 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 
-    private func observeMode() {
-        withObservationTracking {
-            _ = settings?.mainWindowMode
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, let mode = self.settings?.mainWindowMode else { return }
-                self.applyMode(mode)
-                switch mode {
-                case .detached: self.showMainWindow()
-                case .attached: self.hideMainWindow()
-                }
-                self.observeMode()
+    @objc private func startRecording() {
+        Task { await sessionController?.startAdHocSession(type: .meeting) }
+    }
+
+    @objc private func stopRecording() {
+        Task { await sessionController?.stopSession() }
+    }
+
+    @objc private func showStatus() {
+        guard let recordingState else { return }
+        let view = StatusPanelView(recordingState: recordingState)
+        statusWindow = showWindow(statusWindow, title: "noted Status", rootView: view, size: NSSize(width: 360, height: 180))
+    }
+
+    @objc private func showSettings() {
+        guard let settings else { return }
+        let view = SettingsView(settings: settings)
+        settingsWindow = showWindow(settingsWindow, title: "noted Settings", rootView: view, size: NSSize(width: 480, height: 300))
+    }
+
+    private func showWindow<V: View>(_ existing: NSWindow?, title: String, rootView: V, size: NSSize) -> NSWindow {
+        if let existing {
+            existing.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return existing
+        }
+
+        let window = NSWindow(
+            contentRect: NSRect(origin: .zero, size: size),
+            styleMask: [.titled, .closable, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = title
+        window.contentViewController = NSHostingController(rootView: rootView)
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        settings?.applyScreenShareVisibility()
+        return window
+    }
+
+    @objc private func quitApp() {
+        guard recordingState?.isRecording == true else {
+            NSApplication.shared.terminate(nil)
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Stop recording and quit?"
+        alert.informativeText = "noted is currently recording. Stop the session before quitting."
+        alert.addButton(withTitle: "Stop and Quit")
+        alert.addButton(withTitle: "Cancel")
+        if alert.runModal() == .alertFirstButtonReturn {
+            Task {
+                await sessionController?.stopSession()
+                NSApplication.shared.terminate(nil)
             }
         }
+    }
+}
+
+private struct StatusPanelView: View {
+    @Bindable var recordingState: RecordingState
+
+    var body: some View {
+        Form {
+            LabeledContent("Phase", value: recordingState.phase.menuTitle)
+            LabeledContent("Session", value: recordingState.currentSessionID ?? "-")
+            LabeledContent("Output", value: recordingState.currentSessionDirectory?.path ?? "-")
+            if let error = recordingState.lastError {
+                LabeledContent("Last Error", value: error)
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 340, minHeight: 160)
     }
 }

@@ -1,3 +1,3 @@
 # Security
 
-Report security issues to hushscribe@ebserver.org.
+Report security issues to the repository maintainer.

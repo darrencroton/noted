@@ -1,12 +1,15 @@
 @preconcurrency import AVFoundation
 import CoreAudio
 import Foundation
+import os
 
 final class MicCapture: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let _audioLevel = AudioLevel()
     private let _error = SyncString()
     private let _muted = AtomicBool()
+    private let _audioFileWriter = OSAllocatedUnfairLock<AVAudioFile?>(uncheckedState: nil)
+    private let _rawAudioURL = OSAllocatedUnfairLock<URL?>(uncheckedState: nil)
 
     var audioLevel: Float { _audioLevel.value }
     var captureError: String? { _error.value }
@@ -15,12 +18,17 @@ final class MicCapture: @unchecked Sendable {
         set { _muted.value = newValue; if newValue { _audioLevel.value = 0 } }
     }
 
-    func bufferStream(deviceID: AudioDeviceID? = nil) -> AsyncStream<AVAudioPCMBuffer> {
+    func bufferStream(deviceID: AudioDeviceID? = nil, rawAudioURL: URL? = nil) -> AsyncStream<AVAudioPCMBuffer> {
         let level = _audioLevel
         let errorHolder = _error
 
         return AsyncStream { continuation in
             errorHolder.value = nil
+            let previousRawAudioURL = self._rawAudioURL.withLock { $0 }
+            self._rawAudioURL.withLock { $0 = rawAudioURL }
+            if previousRawAudioURL != rawAudioURL {
+                self._audioFileWriter.withLock { $0 = nil }
+            }
 
             diagLog("[MIC-1] bufferStream called, deviceID=\(String(describing: deviceID))")
 
@@ -85,6 +93,13 @@ final class MicCapture: @unchecked Sendable {
                     diagLog("[MIC-6] tap #\(tapCallCount): frames=\(buffer.frameLength) rms=\(rms) level=\(level.value)")
                 }
 
+                self._audioFileWriter.withLock { writer in
+                    if writer == nil, let rawAudioURL = self._rawAudioURL.withLock({ $0 }) {
+                        writer = try? AVAudioFile(forWriting: rawAudioURL, settings: tapFormat.settings)
+                    }
+                    try? writer?.write(from: buffer)
+                }
+
                 continuation.yield(buffer)
             }
 
@@ -117,6 +132,8 @@ final class MicCapture: @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         engine.reset()
+        _audioFileWriter.withLock { $0 = nil }
+        _rawAudioURL.withLock { $0 = nil }
         _audioLevel.value = 0
     }
 

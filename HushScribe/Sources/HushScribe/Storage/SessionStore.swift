@@ -1,48 +1,55 @@
 import Foundation
 
+struct SessionDescriptor: Sendable {
+    let id: String
+    let directory: URL
+    let type: SessionType
+    let startedAt: Date
+
+    var rawDirectory: URL {
+        directory.appendingPathComponent("raw", isDirectory: true)
+    }
+
+    var microphoneAudioURL: URL {
+        rawDirectory.appendingPathComponent("microphone.wav")
+    }
+
+    var systemAudioURL: URL {
+        rawDirectory.appendingPathComponent("system.wav")
+    }
+}
+
 actor SessionStore {
-    private let sessionsDirectory: URL
-    private var currentFile: URL?
-    private var fileHandle: FileHandle?
-    private let encoder = JSONEncoder()
+    private let rootDirectory: URL
 
-    init() {
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        sessionsDirectory = appSupport.appendingPathComponent("HushScribe/sessions", isDirectory: true)
-
-        try? FileManager.default.createDirectory(at: sessionsDirectory, withIntermediateDirectories: true)
-
-        encoder.dateEncodingStrategy = .iso8601
+    init(rootDirectory: URL) {
+        self.rootDirectory = rootDirectory
     }
 
-    func startSession() {
+    func createSession(type: SessionType) throws -> SessionDescriptor {
+        try FileManager.default.createDirectory(at: rootDirectory, withIntermediateDirectories: true)
+
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        let filename = "session_\(formatter.string(from: Date())).jsonl"
-        currentFile = sessionsDirectory.appendingPathComponent(filename)
+        formatter.calendar = Calendar(identifier: .gregorian)
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
 
-        FileManager.default.createFile(atPath: currentFile!.path, contents: nil)
-        fileHandle = try? FileHandle(forWritingTo: currentFile!)
+        let startedAt = Date()
+        let id = "\(formatter.string(from: startedAt))-\(UUID().uuidString.prefix(8).lowercased())"
+        let directory = rootDirectory.appendingPathComponent(id, isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(
+            at: directory.appendingPathComponent("raw", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+
+        return SessionDescriptor(id: id, directory: directory, type: type, startedAt: startedAt)
     }
 
-    func appendRecord(_ record: SessionRecord) {
-        guard let fileHandle else { return }
-
-        do {
-            let data = try encoder.encode(record)
-            fileHandle.seekToEndOfFile()
-            fileHandle.write(data)
-            fileHandle.write("\n".data(using: .utf8)!)
-        } catch {
-            print("SessionStore: failed to write record: \(error)")
+    func discardSession(_ descriptor: SessionDescriptor) throws {
+        guard descriptor.directory.path.hasPrefix(rootDirectory.path) else { return }
+        if FileManager.default.fileExists(atPath: descriptor.directory.path) {
+            try FileManager.default.removeItem(at: descriptor.directory)
         }
     }
-
-    func endSession() {
-        try? fileHandle?.close()
-        fileHandle = nil
-        currentFile = nil
-    }
-
-    var sessionsDirectoryURL: URL { sessionsDirectory }
 }

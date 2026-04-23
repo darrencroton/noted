@@ -11,7 +11,7 @@ final class StreamingTranscriber: @unchecked Sendable {
     private let onSpeechStart: (@Sendable () -> Void)?
     private let onPartial: @Sendable (String) -> Void
     private let onFinal: @Sendable (String) -> Void
-    private let log = Logger(subsystem: "com.drcursor.hushscribe", category: "StreamingTranscriber")
+    private let log = Logger(subsystem: "app.noted.macos", category: "StreamingTranscriber")
 
     /// Resampler from source format to 16kHz mono Float32.
     private var converter: AVAudioConverter?

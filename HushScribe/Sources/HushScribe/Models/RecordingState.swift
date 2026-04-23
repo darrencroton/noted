@@ -1,20 +1,43 @@
 import Foundation
 import Observation
 
+enum SessionPhase: String, Codable, Sendable {
+    case idle
+    case starting
+    case recording
+    case stopping
+    case processing
+    case failed
+
+    var menuTitle: String {
+        switch self {
+        case .idle: return "Idle"
+        case .starting: return "Starting"
+        case .recording: return "Recording"
+        case .stopping: return "Stopping"
+        case .processing: return "Processing"
+        case .failed: return "Failed"
+        }
+    }
+}
+
 @Observable
 @MainActor
 final class RecordingState {
-    var isRecording = false
-    var isPaused = false
-}
+    var phase: SessionPhase = .idle
+    var currentSessionID: String?
+    var currentSessionDirectory: URL?
+    var startedAt: Date?
+    var lastError: String?
 
-extension Notification.Name {
-    static let hushscribeStartCallCapture = Notification.Name("hushscribeStartCallCapture")
-    static let hushscribeStartVoiceMemo = Notification.Name("hushscribeStartVoiceMemo")
-    static let hushscribeStopRecording = Notification.Name("hushscribeStopRecording")
-    static let hushscribePauseRecording = Notification.Name("hushscribePauseRecording")
-    static let hushscribeResumeRecording = Notification.Name("hushscribeResumeRecording")
-    static let hushscribeOpenSummarize = Notification.Name("hushscribeOpenSummarize")
-    static let hushscribeClosePopover = Notification.Name("hushscribeClosePopover")
-    static let hushscribeShowOnboarding = Notification.Name("hushscribeShowOnboarding")
+    var isRecording: Bool { phase == .starting || phase == .recording }
+    var isBusy: Bool { phase == .starting || phase == .recording || phase == .stopping }
+
+    func reset() {
+        phase = .idle
+        currentSessionID = nil
+        currentSessionDirectory = nil
+        startedAt = nil
+        lastError = nil
+    }
 }

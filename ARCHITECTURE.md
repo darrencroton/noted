@@ -1,94 +1,109 @@
-# HushScribe — Architecture
+# noted Architecture
 
-## How It Works
+`noted` is the capture runtime for the Meeting Intelligence System. At this stage it is intentionally small: menubar control, audio capture, ASR, diarization, and local artefact writing.
+
+## Current Shape
 
 ```
-┌─────────────┐     ┌──────────────────────────────┐     ┌───────────────┐
-│  Microphone  │────▶│                              │     │               │
-└─────────────┘     │  HushScribe                  │     │  Obsidian     │
-                    │  ┌──────────┐  ┌───────────┐ │────▶│  Vault        │
-┌─────────────┐     │  │ ASR      │  │ AI Summary│ │     │  (.md files)  │
-│  System      │────▶│  │ (local)  │  │ (local)   │ │     │               │
-│  Audio       │     │  └──────────┘  └───────────┘ │     └───────────────┘
-└─────────────┘     └──────────────────────────────┘
+Menubar
+   |
+   v
+SessionController
+   |
+   +--> MicCapture --------+
+   |                       |
+   +--> SystemAudioCapture +--> StreamingTranscriber --> TranscriptLogger
+                           |
+                           +--> OfflineDiarizerManager --> diarization.json
 ```
-
-1. **Capture** picks up mic audio + system audio from a specific conferencing app via ScreenCaptureKit.
-2. **Transcribe** runs VAD to detect speech segments, then the selected ASR model transcribes locally (Parakeet, WhisperKit, or Apple Speech).
-3. **Diarize** splits system audio into individual speakers after the session ends.
-4. **Write** drops structured `.md` with YAML frontmatter into your vault folder.
-5. **Summarise** (optional) — open any transcript in the Transcript Viewer and generate Highlights + To-Dos on-device via Qwen3, Gemma 3, or Apple NL.
 
 ## Source Tree
 
 ```
 HushScribe/Sources/HushScribe/
 ├── App/
-│   └── HushScribeApp.swift             # App entry point, menu bar setup
+│   ├── NotedApp.swift            # app entry and shared services
+│   ├── SessionController.swift   # start/stop orchestration for manual sessions
+│   └── StatusBarController.swift # menubar menu and small status/settings windows
 ├── Audio/
-│   ├── MicCapture.swift                # AVAudioEngine mic input
-│   └── SystemAudioCapture.swift        # ScreenCaptureKit + per-app filtering
+│   ├── MicCapture.swift
+│   └── SystemAudioCapture.swift
 ├── Models/
-│   ├── Models.swift                    # Domain types (Utterance, Speaker, etc.)
-│   ├── RecordingState.swift            # Session state enum
-│   ├── SummaryModel.swift              # LLM model list and HuggingFace IDs
-│   └── TranscriptStore.swift           # Observable live transcript state
-├── Services/
-│   ├── LLMSummaryEngine.swift          # MLX-based on-device LLM inference
-│   ├── MeetingMonitor.swift            # Auto-detect meeting apps + mic activity
-│   └── SummaryService.swift            # Apple NL extractive summarisation
+│   ├── Models.swift
+│   └── RecordingState.swift
 ├── Settings/
-│   └── AppSettings.swift               # UserDefaults-backed app configuration
+│   └── AppSettings.swift
 ├── Storage/
-│   ├── SessionStore.swift              # Session metadata
-│   └── TranscriptLogger.swift          # .md output with YAML frontmatter
+│   ├── SessionStore.swift
+│   └── TranscriptLogger.swift
 ├── Transcription/
-│   ├── ASRBackend.swift                # ASR protocol shared by all backends
-│   ├── SFSpeechBackend.swift           # Apple Speech (SFSpeechRecognizer)
-│   ├── StreamingTranscriber.swift      # VAD + ASR pipeline per audio stream
-│   ├── TranscriptionEngine.swift       # Dual-stream orchestration + lifecycle
-│   └── WhisperKitBackend.swift         # WhisperKit ASR backend
+│   ├── ASRBackend.swift
+│   ├── SFSpeechBackend.swift
+│   ├── StreamingTranscriber.swift
+│   ├── TranscriptionEngine.swift
+│   └── WhisperKitBackend.swift
 └── Views/
-    ├── ContentView.swift               # Main window (record controls + live transcript)
-    ├── ControlBar.swift                # Record / pause / stop bar
-    ├── OnboardingView.swift            # First-launch wizard
-    ├── SettingsView.swift              # Settings window (tabbed)
-    ├── SpeakerNamingView.swift         # Post-session speaker name assignment
-    ├── SummarizeView.swift             # Transcript viewer + AI summary
-    ├── TranscriptView.swift            # Live transcript bubbles
-    └── WaveformView.swift              # Dual VU meters
+    └── SettingsView.swift
 ```
 
-## Key Data Flow
+The source directory still carries the inherited `HushScribe` path name. The package, executable, bundle display name, and bundle identifier are now `noted`-specific.
 
-- `TranscriptionEngine` owns `MicCapture` and `SystemAudioCapture`. Each stream feeds a `StreamingTranscriber` which pipes audio through `VadManager` (FluidAudio) then the selected `ASRBackend`.
-- Final utterances land in `TranscriptStore` as `Utterance` values; partial results are written to `volatileYouText` / `volatileThemText` for live display.
-- `TranscriptLogger` writes the `.md` file on session stop. Post-session diarization runs via `OfflineDiarizerManager` (FluidAudio) and re-labels system audio speakers.
-- `LLMSummaryEngine` loads MLX models on demand (cached in `~/Library/Caches/models/`). `SummarizeView` calls it with the transcript text and receives `(summary, thinking)`.
+## Removed From Runtime Scope
+
+- MLX summary engine and all Qwen/Gemma model-download logic.
+- Apple NaturalLanguage summary service.
+- Transcript viewer and summary UI.
+- Main transcript window.
+- Meeting-app auto-detection.
+- Post-session speaker naming UI.
+- Homebrew cask and GitHub Pages marketing site.
+
+Archived files live locally under ignored `archive/hushscribe-strip/` for reference.
+
+## Current Output
+
+Manual sessions write under `~/Documents/noted/sessions` unless changed in Settings:
+
+```
+<session-id>/
+├── raw/
+│   ├── microphone.wav
+│   └── system.wav
+├── session.json
+├── transcript.txt
+├── segments.json
+└── diarization.json
+```
+
+This is a stripped baseline format, not the final cross-repo completion contract.
+
+## Coming Later
+
+Later phases add the contract-driven pieces from the master implementation plan:
+
+- `noted` CLI.
+- Manifest loader and validator.
+- Canonical session directory writer.
+- Runtime status file writer.
+- Completion file writer.
+- End-of-meeting popup.
+- Next-meeting handoff execution from pre-prepared manifests.
+
+`briefing` remains the owner of calendar interpretation, manifest contents, summarisation, and Obsidian note writing.
 
 ## Build
-
-**Requirements:** Apple Silicon Mac, macOS 26+, Xcode 26.3+
-
-```bash
-git clone git@github.com:drcursor/HushScribe.git
-cd HushScribe
-./scripts/release.sh test
-```
-
-Builds, signs, and packages to `dist/HushScribe.dmg`. First launch downloads the Parakeet ASR model (~600 MB, cached after that). LLM summary models are downloaded separately in Settings → Models.
-
-**Dev build:**
 
 ```bash
 cd HushScribe
 swift build
 ```
 
+Requirements are Apple Silicon, macOS 26+, and Xcode 26.3+.
+
 ## Dependencies
 
 | Library | Purpose |
-|---|---|
-| [FluidAudio](https://github.com/FluidInference/FluidAudio) | Parakeet-TDT v3 ASR, Silero VAD, offline diarization |
-| [WhisperKit](https://github.com/argmaxinc/WhisperKit) | Whisper Base / Large v3 ASR on Apple Silicon |
-| [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) | On-device LLM inference (Qwen3, Gemma 3) via MLX |
+| --- | --- |
+| FluidAudio | Parakeet-TDT ASR, VAD, offline diarization |
+| WhisperKit | Local Whisper ASR |
+| Apple Speech | Optional built-in ASR backend |
