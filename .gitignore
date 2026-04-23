@@ -1,0 +1,18 @@
+# Build artifacts
+HushScribe/.build/
+HushScribe/.swiftpm/
+dist/
+build/
+.claude/
+# macOS
+.DS_Store
+*.xcuserdata
+
+# IDE
+*.swp
+*~
+
+# Misc
+*.spec
+HushScribe/HushScribe.dmg
+todo.md
