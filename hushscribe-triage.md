@@ -1,6 +1,6 @@
 # HushScribe Source Triage for `noted`
 
-Intended destination: `noted/docs/hushscribe-triage.md`.
+**Single source of truth.** Keep/strip/rewrite calls live here, not in the Master Implementation Plan or the Initial Action Plan — both reference this file by pointer (`noted/hushscribe-triage.md`). If a call needs to change, change it here and update the dependency fallout note in the action plan if SPM dependencies shift.
 
 This audit is based on the actual files under `HushScribe/Sources/HushScribe/`, checked against the master plan and supplemental guardrails. It also incorporates a critical comparison against the alternate draft in `/Users/dcroton/Desktop/hushscribe-triage-claude.md`.
 
