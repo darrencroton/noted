@@ -19,5 +19,10 @@ let package = Package(
             path: "Sources/HushScribe",
             exclude: ["Info.plist", "Noted.entitlements", "Assets"]
         ),
+        .testTarget(
+            name: "NotedContractTests",
+            dependencies: [],
+            path: "Tests/NotedContractTests"
+        ),
     ]
 )

@@ -1,0 +1,17 @@
+# Vendored Contracts
+
+This directory is the pinned `briefing-noted-contracts` snapshot used by
+`noted` tests. The contract payload lives under `contracts/` to match the
+submodule layout documented by the contracts repo.
+
+Refresh procedure after a new contracts tag is cut:
+
+```bash
+ditto ../contracts vendor/contracts/contracts
+printf "vX.Y.Z\n" > vendor/contracts/CONTRACTS_TAG
+cd HushScribe
+swift test --filter NotedContractTests
+```
+
+Do not edit files under `vendor/contracts/contracts/` directly. Make contract
+changes in the root contracts repo first, tag them, then refresh this snapshot.
