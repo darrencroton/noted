@@ -9,7 +9,7 @@ This repository is currently in the stripped HushScribe baseline phase. The goal
 - A macOS 26+ Apple Silicon menubar app.
 - A local audio capture and transcription agent.
 - The owner of runtime recording state and post-session diarization.
-- A producer of session artefacts under `~/Documents/noted/sessions` by default.
+- A producer of session artefacts under this repo's `sessions/` directory by default during the current development baseline.
 
 ## What noted is not
 

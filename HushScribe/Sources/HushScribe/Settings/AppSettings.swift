@@ -37,8 +37,14 @@ final class AppSettings {
         let defaults = UserDefaults.standard
         transcriptionLocale = defaults.string(forKey: "transcriptionLocale") ?? "en-US"
         inputDeviceID = AudioDeviceID(defaults.integer(forKey: "inputDeviceID"))
-        outputDirectoryPath = defaults.string(forKey: "outputDirectoryPath")
-            ?? NSString("~/Documents/noted/sessions").expandingTildeInPath
+        let storedOutputPath = defaults.string(forKey: "outputDirectoryPath")
+        if let storedOutputPath, storedOutputPath != Self.legacyDefaultOutputDirectoryPath {
+            outputDirectoryPath = storedOutputPath
+        } else {
+            let defaultOutputPath = Self.defaultOutputDirectoryPath
+            outputDirectoryPath = defaultOutputPath
+            defaults.set(defaultOutputPath, forKey: "outputDirectoryPath")
+        }
         transcriptionModel = TranscriptionModel(rawValue: defaults.string(forKey: "transcriptionModel") ?? "")
             ?? .parakeet
         let storedThreshold = defaults.double(forKey: "sysVadThreshold")
@@ -53,7 +59,7 @@ final class AppSettings {
     func reset() {
         transcriptionLocale = "en-US"
         inputDeviceID = 0
-        outputDirectoryPath = NSString("~/Documents/noted/sessions").expandingTildeInPath
+        outputDirectoryPath = Self.defaultOutputDirectoryPath
         transcriptionModel = .parakeet
         sysVadThreshold = 0.92
         hideFromScreenShare = true
@@ -72,5 +78,50 @@ final class AppSettings {
 
     var locale: Locale {
         Locale(identifier: transcriptionLocale)
+    }
+
+    private static let legacyDefaultOutputDirectoryPath = NSString("~/Documents/noted/sessions").expandingTildeInPath
+
+    private static var defaultOutputDirectoryPath: String {
+        repositoryRootURL().appendingPathComponent("sessions", isDirectory: true).path
+    }
+
+    private static func repositoryRootURL() -> URL {
+        let fileManager = FileManager.default
+        let candidates = [
+            Bundle.main.bundleURL,
+            URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true),
+        ]
+
+        for candidate in candidates {
+            if let root = findRepositoryRoot(startingAt: candidate) {
+                return root
+            }
+        }
+
+        return fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/noted", isDirectory: true)
+    }
+
+    private static func findRepositoryRoot(startingAt url: URL) -> URL? {
+        let fileManager = FileManager.default
+        var directory = url.hasDirectoryPath ? url : url.deletingLastPathComponent()
+
+        while true {
+            let repoPackage = directory.appendingPathComponent("HushScribe/Package.swift").path
+            if fileManager.fileExists(atPath: repoPackage) {
+                return directory
+            }
+
+            let package = directory.appendingPathComponent("Package.swift").path
+            if directory.lastPathComponent == "HushScribe",
+               fileManager.fileExists(atPath: package) {
+                return directory.deletingLastPathComponent()
+            }
+
+            let parent = directory.deletingLastPathComponent()
+            if parent.path == directory.path { return nil }
+            directory = parent
+        }
     }
 }

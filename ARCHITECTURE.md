@@ -62,7 +62,7 @@ Archived files live locally under ignored `archive/hushscribe-strip/` for refere
 
 ## Current Output
 
-Manual sessions write under `~/Documents/noted/sessions` unless changed in Settings:
+Manual sessions write under the repo-root `sessions/` directory unless changed in Settings:
 
 ```
 <session-id>/
