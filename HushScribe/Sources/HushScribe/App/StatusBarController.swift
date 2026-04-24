@@ -38,23 +38,26 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     private func buildMenuItems(into menu: NSMenu) {
         guard let recordingState else { return }
+        let bridgedStatus = currentRuntimeStatus()
 
         let title = NSMenuItem(title: "noted", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
 
-        let state = NSMenuItem(title: "Status: \(recordingState.phase.menuTitle)", action: nil, keyEquivalent: "")
+        let statusTitle = bridgedStatus?.status ?? recordingState.phase.menuTitle.lowercased()
+        let state = NSMenuItem(title: "Status: \(statusTitle)", action: nil, keyEquivalent: "")
         state.isEnabled = false
         menu.addItem(state)
+        if let bridgedStatus {
+            let phase = NSMenuItem(title: "Phase: \(bridgedStatus.phase)", action: nil, keyEquivalent: "")
+            phase.isEnabled = false
+            menu.addItem(phase)
+        }
         menu.addItem(.separator())
 
-        if recordingState.isRecording {
-            menu.addItem(makeItem("Stop", action: #selector(stopRecording)))
-        } else {
-            let start = makeItem("Start", action: #selector(startRecording))
-            start.isEnabled = !recordingState.isBusy
-            menu.addItem(start)
-        }
+        let start = makeItem("Start requires manifest", action: #selector(startRecording))
+        start.isEnabled = false
+        menu.addItem(start)
 
         menu.addItem(makeItem("Status", action: #selector(showStatus)))
         menu.addItem(.separator())
@@ -78,18 +81,39 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func updateIcon() {
         guard let button = statusItem?.button else { return }
         let symbol: String
-        switch recordingState?.phase ?? .idle {
-        case .idle:
-            symbol = "waveform"
-        case .starting, .recording:
+        switch currentRuntimeStatus()?.status {
+        case "recording":
             symbol = "record.circle.fill"
-        case .stopping, .processing:
+        case "processing":
             symbol = "gearshape.2.fill"
-        case .failed:
+        case "completed", "completed_with_warnings":
+            symbol = "checkmark.circle.fill"
+        case "failed":
             symbol = "exclamationmark.triangle.fill"
+        default:
+            switch recordingState?.phase ?? .idle {
+            case .idle:
+                symbol = "waveform"
+            case .starting, .recording:
+                symbol = "record.circle.fill"
+            case .stopping, .processing:
+                symbol = "gearshape.2.fill"
+            case .failed:
+                symbol = "exclamationmark.triangle.fill"
+            }
         }
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "noted")
-        button.image?.isTemplate = recordingState?.phase != .recording
+        button.image?.isTemplate = symbol != "record.circle.fill"
+    }
+
+    private func currentRuntimeStatus() -> RuntimeStatus? {
+        if let active = RuntimeFiles.readActiveCapture() {
+            return RuntimeFiles.readStatus(sessionDir: URL(fileURLWithPath: active.sessionDir, isDirectory: true))
+        }
+        if let latest = RuntimeFiles.latestRegistryRecord() {
+            return RuntimeFiles.readStatus(sessionDir: URL(fileURLWithPath: latest.sessionDir, isDirectory: true))
+        }
+        return nil
     }
 
     private func observeIcon() {
@@ -104,7 +128,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func startRecording() {
-        Task { await sessionController?.startAdHocSession(type: .meeting) }
+        NSSound.beep()
     }
 
     @objc private func stopRecording() {

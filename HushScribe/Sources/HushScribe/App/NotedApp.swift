@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 @main
 struct NotedApplication {
@@ -6,13 +7,24 @@ struct NotedApplication {
     private static var delegate: AppDelegate?
 
     @MainActor
-    static func main() {
+    static func runApp() {
         let app = NSApplication.shared
         let delegate = AppDelegate()
         Self.delegate = delegate
         app.delegate = delegate
         app.setActivationPolicy(.accessory)
         app.run()
+    }
+
+    static func main() async {
+        if CommandLine.arguments.count > 1 {
+            let exitCode = await NotedCLI().run(arguments: Array(CommandLine.arguments.dropFirst()))
+            Darwin.exit(Int32(exitCode))
+        }
+
+        await MainActor.run {
+            runApp()
+        }
     }
 }
 

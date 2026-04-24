@@ -56,22 +56,22 @@ Goal: A real in-person meeting can be recorded from the CLI with a valid manifes
 
 ### Tickets
 
-| Ticket | Title | Estimate | Dependencies | Acceptance notes |
-| --- | --- | ---: | --- | --- |
-| N-01 | Add CLI entrypoint and command router | 2 days | Current Swift package | Provides Phase 2 commands: `start`, `stop`, `status`, `validate-manifest`, `version`; `extend` and `switch-next` arrive in Phase 3 and must not silently no-op before then; stdout is one JSON line; diagnostics go to stderr |
-| N-02 | Implement contract snapshot lookup | 1 day | `vendor/contracts` | Version command reports app version plus manifest/completion schema versions from pinned contracts |
-| N-02a | Implement TOML settings layer | 3 days | Current Swift package | Replaces remaining UserDefaults-backed runtime settings with `~/Library/Application Support/noted/settings.toml`; includes `host_name`, `language`, `asr_backend`, `asr_model_variant`, default input device, and `output_root` |
-| N-03 | Implement manifest models and validator | 3 days | N-01, N-02 | Parses major-1 manifests, rejects missing required fields, rejects naive timestamps, accepts absent/null `hooks.completion_callback`, covers shared valid/invalid fixtures |
-| N-04 | Rewrite session storage for canonical directory layout | 3 days | N-03 | Creates `runtime/`, `audio/`, `transcript/`, `diarization/`, `outputs/`, `logs/`; never writes outside `session_dir` except reserved note path |
-| N-05 | Implement runtime status writer | 2 days | N-04 | Atomic rewrites of `runtime/status.json` on every state/phase transition; schema-valid output |
-| N-06 | Adapt in-person capture to `room_mic` contract | 3 days | N-02a, N-04 | Writes `audio/raw_room.wav`; handles configured default input device from settings; startup failures produce contract-shaped errors |
-| N-07 | Add recording-start bell | 1 day | N-06 | Bell plays at actual capture start, between `acquiring_audio_resources` and `capturing`; no user-toggleable setting |
-| N-08 | Implement fast stop and background processor handoff | 4 days | N-05, N-06 | `stop` returns after raw audio flush; ASR/diarization continue while the app can accept the next capture |
-| N-09 | Adapt ASR and diarization outputs | 6 days | N-02a, N-08 | Swift stack uses configured `asr_backend` and `asr_model_variant`; produces `transcript.txt`, `transcript.json`, optional `segments.json`, and diarization output; diarization failure degrades with warning. Re-estimate after the storage/engine rewrite is started because this is likely the densest adaptation work |
-| N-10 | Implement completion writer | 2 days | N-08, N-09 | Writes schema-valid completion after processing; maps stop reasons to terminal status per `session-directory.md` |
-| N-11 | Enforce active-capture concurrency | 2 days | N-01, N-08 | Second `start` during active capture exits `5`; post-processing may overlap a later capture |
-| N-12 | Minimal menubar state bridge | 2 days | N-05 | Menubar shows idle, recording, processing, done/failed without exposing transcript or summary UI |
-| N-13 | Phase 2 contract and smoke tests | 4 days | N-02a, N-03 through N-12 | Shared fixtures pass; short capture smoke verifies raw audio, transcript, status, completion, and fast-stop behavior |
+| Ticket | Status | Title | Estimate | Dependencies | Acceptance notes |
+| --- | --- | --- | ---: | --- | --- |
+| N-01 | Completed | Add CLI entrypoint and command router | 2 days | Current Swift package | Provides Phase 2 commands: `start`, `stop`, `status`, `validate-manifest`, `version`; `extend` and `switch-next` arrive in Phase 3 and must not silently no-op before then; stdout is one JSON line; diagnostics go to stderr |
+| N-02 | Completed | Implement contract snapshot lookup | 1 day | `vendor/contracts` | Version command reports app version plus manifest/completion schema versions from pinned contracts |
+| N-02a | Completed | Implement TOML settings layer | 3 days | Current Swift package | Replaces remaining UserDefaults-backed runtime settings with `~/Library/Application Support/noted/settings.toml`; includes `host_name`, `language`, `asr_backend`, `asr_model_variant`, default input device, and `output_root` |
+| N-03 | Completed | Implement manifest models and validator | 3 days | N-01, N-02 | Parses major-1 manifests, rejects missing required fields, rejects naive timestamps, accepts absent/null `hooks.completion_callback`, covers shared valid/invalid fixtures |
+| N-04 | Completed | Rewrite session storage for canonical directory layout | 3 days | N-03 | Creates `runtime/`, `audio/`, `transcript/`, `diarization/`, `outputs/`, `logs/`; never writes outside `session_dir` except reserved note path |
+| N-05 | Completed | Implement runtime status writer | 2 days | N-04 | Atomic rewrites of `runtime/status.json` on every state/phase transition; schema-valid output |
+| N-06 | Completed | Adapt in-person capture to `room_mic` contract | 3 days | N-02a, N-04 | Writes `audio/raw_room.wav`; handles configured default input device from settings; startup failures produce contract-shaped errors |
+| N-07 | Completed | Add recording-start bell | 1 day | N-06 | Bell plays at actual capture start, between `acquiring_audio_resources` and `capturing`; no user-toggleable setting |
+| N-08 | Completed | Implement fast stop and background processor handoff | 4 days | N-05, N-06 | `stop` returns after raw audio flush; ASR/diarization continue while the app can accept the next capture |
+| N-09 | Completed | Adapt ASR and diarization outputs | 6 days | N-02a, N-08 | Swift stack uses configured `asr_backend` and `asr_model_variant`; produces `transcript.txt`, `transcript.json`, optional `segments.json`, and diarization output; diarization failure degrades with warning. Re-estimate after the storage/engine rewrite is started because this is likely the densest adaptation work |
+| N-10 | Completed | Implement completion writer | 2 days | N-08, N-09 | Writes schema-valid completion after processing; maps stop reasons to terminal status per `session-directory.md` |
+| N-11 | Completed | Enforce active-capture concurrency | 2 days | N-01, N-08 | Second `start` during active capture exits `5`; post-processing may overlap a later capture |
+| N-12 | Completed | Minimal menubar state bridge | 2 days | N-05 | Menubar shows idle, recording, processing, done/failed without exposing transcript or summary UI |
+| N-13 | Completed | Phase 2 contract and smoke tests | 4 days | N-02a, N-03 through N-12 | Shared fixtures pass; short capture smoke verifies raw audio, transcript, status, completion, and fast-stop behavior |
 
 Phase 2 focused estimate: 36 days.
 

@@ -164,6 +164,7 @@ final class TranscriptionEngine {
         appBundleID: String? = nil,
         rawMicrophoneAudioURL: URL? = nil,
         rawSystemAudioURL: URL? = nil,
+        captureSystemAudio: Bool = true,
         sysVadThreshold: Double = 0.92
     ) async {
         guard !isRunning else { return }
@@ -208,31 +209,33 @@ final class TranscriptionEngine {
             }
         }
 
-        do {
-            let sysStreams = try await systemCapture.bufferStream(
-                appBundleID: appBundleID,
-                rawAudioURL: rawSystemAudioURL
-            )
-            let sysTranscriber = StreamingTranscriber(
-                asrBackend: asrBackend,
-                vadManager: sysVadManager,
-                speaker: .system,
-                audioSource: .system,
-                onSpeechStart: { [weak self] in Task { @MainActor in self?.isSpeechDetected = true } },
-                onPartial: { _ in },
-                onFinal: { [weak self] text in
-                    handler?(TranscriptSegment(speaker: .system, text: text))
-                    Task { @MainActor in self?.isSpeechDetected = false }
+        if captureSystemAudio {
+            do {
+                let sysStreams = try await systemCapture.bufferStream(
+                    appBundleID: appBundleID,
+                    rawAudioURL: rawSystemAudioURL
+                )
+                let sysTranscriber = StreamingTranscriber(
+                    asrBackend: asrBackend,
+                    vadManager: sysVadManager,
+                    speaker: .system,
+                    audioSource: .system,
+                    onSpeechStart: { [weak self] in Task { @MainActor in self?.isSpeechDetected = true } },
+                    onPartial: { _ in },
+                    onFinal: { [weak self] text in
+                        handler?(TranscriptSegment(speaker: .system, text: text))
+                        Task { @MainActor in self?.isSpeechDetected = false }
+                    }
+                )
+                sysTask = Task.detached { [weak self] in
+                    let failed = await sysTranscriber.run(stream: sysStreams.systemAudio)
+                    if failed {
+                        Task { @MainActor in self?.lastError = "System audio transcription failed." }
+                    }
                 }
-            )
-            sysTask = Task.detached { [weak self] in
-                let failed = await sysTranscriber.run(stream: sysStreams.systemAudio)
-                if failed {
-                    Task { @MainActor in self?.lastError = "System audio transcription failed." }
-                }
+            } catch {
+                lastError = "Failed to start system audio capture: \(error.localizedDescription)"
             }
-        } catch {
-            lastError = "Failed to start system audio capture: \(error.localizedDescription)"
         }
 
         installDefaultDeviceListener()

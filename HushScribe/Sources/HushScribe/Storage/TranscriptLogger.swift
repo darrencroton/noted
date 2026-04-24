@@ -27,7 +27,8 @@ actor TranscriptLogger {
     }
 
     func startSession(_ descriptor: SessionDescriptor) throws {
-        let transcriptURL = descriptor.directory.appendingPathComponent("transcript.txt")
+        try FileManager.default.createDirectory(at: descriptor.transcriptDirectory, withIntermediateDirectories: true)
+        let transcriptURL = descriptor.transcriptDirectory.appendingPathComponent("transcript.txt")
         let header = """
         noted session \(descriptor.id)
         started_at: \(Self.iso8601String(from: descriptor.startedAt))
@@ -80,7 +81,9 @@ actor TranscriptLogger {
     }
 
     func writeDiarization(_ segments: [DiarizationSegment], to directory: URL) throws {
-        let url = directory.appendingPathComponent("diarization.json")
+        let diarizationDirectory = directory.appendingPathComponent("diarization", isDirectory: true)
+        try FileManager.default.createDirectory(at: diarizationDirectory, withIntermediateDirectories: true)
+        let url = diarizationDirectory.appendingPathComponent("diarization.json")
         let data = try encoder.encode(segments)
         try data.write(to: url, options: .atomic)
     }
@@ -104,13 +107,20 @@ actor TranscriptLogger {
             "started_at": Self.iso8601String(from: descriptor.startedAt),
         ]
         let data = try encoder.encode(metadata)
-        try data.write(to: descriptor.directory.appendingPathComponent("session.json"), options: .atomic)
+        try data.write(to: descriptor.runtimeDirectory.appendingPathComponent("session.json"), options: .atomic)
     }
 
     private func writeSegments() throws {
         guard let descriptor else { throw TranscriptLoggerError.noActiveSession }
-        let data = try encoder.encode(segments)
-        try data.write(to: descriptor.directory.appendingPathComponent("segments.json"), options: .atomic)
+        let transcript = TranscriptDocument(
+            schemaVersion: "1.0",
+            sessionID: descriptor.id,
+            segments: segments
+        )
+        let transcriptData = try encoder.encode(transcript)
+        try transcriptData.write(to: descriptor.transcriptDirectory.appendingPathComponent("transcript.json"), options: .atomic)
+        let segmentsData = try encoder.encode(segments)
+        try segmentsData.write(to: descriptor.transcriptDirectory.appendingPathComponent("segments.json"), options: .atomic)
     }
 
     private static func iso8601String(from date: Date) -> String {
@@ -125,5 +135,17 @@ actor TranscriptLogger {
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "HH:mm:ss"
         return formatter.string(from: date)
+    }
+}
+
+private struct TranscriptDocument: Codable {
+    let schemaVersion: String
+    let sessionID: String
+    let segments: [TranscriptSegment]
+
+    enum CodingKeys: String, CodingKey {
+        case schemaVersion = "schema_version"
+        case sessionID = "session_id"
+        case segments
     }
 }

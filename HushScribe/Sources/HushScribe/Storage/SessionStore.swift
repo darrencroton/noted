@@ -5,17 +5,47 @@ struct SessionDescriptor: Sendable {
     let directory: URL
     let type: SessionType
     let startedAt: Date
+    let audioStrategy: String
 
-    var rawDirectory: URL {
-        directory.appendingPathComponent("raw", isDirectory: true)
+    init(
+        id: String,
+        directory: URL,
+        type: SessionType,
+        startedAt: Date,
+        audioStrategy: String = "room_mic"
+    ) {
+        self.id = id
+        self.directory = directory
+        self.type = type
+        self.startedAt = startedAt
+        self.audioStrategy = audioStrategy
+    }
+
+    var audioDirectory: URL {
+        directory.appendingPathComponent("audio", isDirectory: true)
+    }
+
+    var transcriptDirectory: URL {
+        directory.appendingPathComponent("transcript", isDirectory: true)
+    }
+
+    var diarizationDirectory: URL {
+        directory.appendingPathComponent("diarization", isDirectory: true)
+    }
+
+    var runtimeDirectory: URL {
+        directory.appendingPathComponent("runtime", isDirectory: true)
     }
 
     var microphoneAudioURL: URL {
-        rawDirectory.appendingPathComponent("microphone.wav")
+        if audioStrategy == "mic_plus_system" {
+            return audioDirectory.appendingPathComponent("raw_mic.wav")
+        }
+        return audioDirectory.appendingPathComponent("raw_room.wav")
     }
 
     var systemAudioURL: URL {
-        rawDirectory.appendingPathComponent("system.wav")
+        audioDirectory.appendingPathComponent("raw_system.wav")
     }
 }
 
@@ -37,13 +67,18 @@ actor SessionStore {
         let startedAt = Date()
         let id = "\(formatter.string(from: startedAt))-\(UUID().uuidString.prefix(8).lowercased())"
         let directory = rootDirectory.appendingPathComponent(id, isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(
-            at: directory.appendingPathComponent("raw", isDirectory: true),
-            withIntermediateDirectories: true
-        )
+        try Self.createCanonicalDirectories(at: directory)
 
         return SessionDescriptor(id: id, directory: directory, type: type, startedAt: startedAt)
+    }
+
+    static func createCanonicalDirectories(at directory: URL) throws {
+        for name in ["runtime", "audio", "transcript", "diarization", "outputs", "logs"] {
+            try FileManager.default.createDirectory(
+                at: directory.appendingPathComponent(name, isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
     }
 
     func discardSession(_ descriptor: SessionDescriptor) throws {
