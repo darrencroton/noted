@@ -26,7 +26,7 @@ cd HushScribe && swift build
 defaults delete app.noted.macos
 ```
 
-There are no unit tests in the project currently.
+Contract tests live in `HushScribe/Tests/NotedContractTests/` and validate schema fixtures and the pinned contracts version. There are no other unit tests currently.
 
 ## Project Layout
 
@@ -36,8 +36,9 @@ The Swift package lives in `HushScribe/` for now because that path was inherited
 HushScribe/Sources/HushScribe/
 ├── App/                  # App entry, session controller, status item
 ├── Audio/                # MicCapture, SystemAudioCapture
+├── CLI/                  # NotedCLI, Manifest validator, RuntimeFiles
 ├── Models/               # Domain types and recording state
-├── Settings/             # AppSettings
+├── Settings/             # AppSettings, RuntimeSettings (TOML-backed)
 ├── Storage/              # SessionStore and TranscriptLogger
 ├── Transcription/        # ASRBackend + FluidAudio/WhisperKit/SFSpeech backends
 └── Views/                # Minimal settings view
@@ -47,13 +48,23 @@ Archived HushScribe source and website files live locally under ignored `archive
 
 ## Architecture Notes
 
-- **Menubar app.** `LSUIElement = true`; launching should create only a menubar icon.
-- **Manual baseline sessions.** Step 4 supports manual start/stop from the menubar. CLI, manifest loading, runtime status, completion files, and end-of-meeting popup come later.
+- **Menubar app.** `LSUIElement = true`; launching creates only a menubar icon. CLI invocations bypass the menubar and run headlessly.
+- **Phase 2 CLI runtime.** `noted start --manifest`, `stop`, `status`, `validate-manifest`, and `version` are all implemented. The menubar Start action is disabled until Phase 3 (canonical ad hoc manifests).
 - **Dual audio streams.** `TranscriptionEngine` owns `MicCapture` and `SystemAudioCapture`. Each stream feeds a `StreamingTranscriber`.
 - **ASR pipeline.** `StreamingTranscriber` runs FluidAudio VAD and then the selected `ASRBackend`.
-- **Post-session diarization.** `OfflineDiarizerManager` runs after stop against buffered system audio and writes `diarization.json` when successful.
-- **Settings.** Persisted through `UserDefaults` until the TOML settings contract is implemented later.
-- **Output.** Current baseline output is a session directory with raw WAV audio, `session.json`, `transcript.txt`, `segments.json`, and optionally `diarization.json`.
+- **Post-session diarization.** `OfflineDiarizerManager` runs after stop against the captured audio and writes `diarization/diarization.json` when successful.
+- **Settings.** TOML-backed at `~/Library/Application Support/noted/settings.toml` via `RuntimeSettings.swift`. Legacy `AppSettings` remains for menubar-specific UI preferences.
+- **Output.** Phase 2 canonical session directory under the manifest-specified `paths.session_dir`:
+  ```
+  audio/raw_room.wav          # room-mic capture (mic_plus_system: raw_mic.wav + raw_system.wav)
+  transcript/transcript.txt
+  transcript/transcript.json
+  transcript/segments.json    # optional
+  diarization/diarization.json  # when diarization succeeds
+  outputs/completion.json     # sole terminal outcome source; written last
+  runtime/status.json         # updated at every phase transition
+  logs/noted.log
+  ```
 
 ## Dependencies
 

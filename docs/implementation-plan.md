@@ -156,51 +156,27 @@ Broad work areas:
 
 Phase 5 should not begin until the first real Phase 4 vertical slice has produced enough operational data to rank risks.
 
-## Tickets in the First Vertical Slice
+## Step 7 Vertical Slice — Completed 2026-04-24
 
-The full Phase 2-4 estimate is not the Step 7 estimate. Step 7 should prove the narrowest useful path before polishing the whole surface.
+Phase 2 (N-01 through N-13) is complete. The full vertical slice was run on 2026-04-24:
 
-Minimum `noted` slice:
+- Hand-written manifest → `noted start` (EXIT:0, recording) → `noted stop` (EXIT:0, audio_finalised) → `completion.json` (terminal_status=completed, all *_ok=true) → `briefing session-ingest` (EXIT:0, block_written=true) → `## Meeting Summary` written to note.
+- Guardrail #12 verified: user-owned `## Meeting Notes` content byte-identical after ingest.
+- No contract-level bugs found.
 
-- N-01 through N-08.
-- N-09 as a thin path: produce `transcript.txt` and `transcript.json`; diarization may be disabled or fail with a warning as long as `completion.json` reflects that truthfully.
-- N-10 and N-11.
-- N-13 focused on CLI contract tests and one short real capture.
+See `docs/step-7-report.md` in the root repo for full findings.
 
-Nice-to-have for the same slice, but not required to prove the runtime boundary:
+## Tickets That Can Start Next (Phase 3)
 
-- N-12 if menubar state is needed for the demo.
-- N-21 and N-22 if the Step 7 goal is automatic completion handoff rather than manually running `briefing session-ingest`.
+- N-14 Implement prompt scheduler.
+- N-15 Build end-of-meeting popup UI.
+- N-23 Implement ad hoc full-manifest writer (menubar Start).
 
-Explicitly out of the first slice:
-
-- Phase 3 popup work.
-- N-23 canonical ad hoc menubar Start. Until this lands, menubar Start must not create legacy output.
-- Online/hybrid capture.
-
-## Tickets That Can Start Tomorrow
-
-- N-01 CLI entrypoint and router.
-- N-02 contract snapshot lookup.
-- N-02a TOML settings layer.
-- N-03 manifest models and validator, if the validation approach is chosen.
+Phase 4 integration tickets N-21 and N-22 (`briefing session-ingest` invocation) can start once Phase 3 popup basics are stable.
 
 ## Highest-Risk Assumptions
 
-- Fast stop plus overlapping post-processing will be reliable with Swift ASR/diarization on the target Mac.
-- Contract validation in Swift can be kept strict enough without turning into a large schema-engine project.
-- Current HushScribe capture code can be adapted to the canonical directory layout without destabilizing audio capture.
-- Back-to-back handoff timing is achievable while previous-session post-processing is active.
-
-Cheapest ways to test these:
-
-- Build a CLI-only Phase 2 spike before any popup work.
-- Record and stop a 30-second real capture repeatedly, measuring return time and artefact completeness.
-- Run ASR/diarization post-processing while starting a second capture.
-
-## Review Questions
-
-- Which Phase 2 tickets are too large to become GitHub issues as written?
-- Which ticket could the dev team start tomorrow without waiting on `briefing`?
-- Which failure mode would hurt most if the contract shape is wrong: invalid manifests, missing completion files, or slow stop?
-- What assumptions about Swift validation, audio devices, or async processing could turn out false, and what is the cheapest test?
+- Fast stop plus overlapping post-processing will be reliable with Swift ASR/diarization on the target Mac. **Proved valid for room-mic sessions in Phase 2.**
+- Contract validation in Swift can be kept strict enough without turning into a large schema-engine project. **Proved valid in Phase 2 using hand-written validators against pinned fixtures.**
+- Current HushScribe capture code can be adapted to the canonical directory layout without destabilizing audio capture. **Proved valid in Phase 2.**
+- Back-to-back handoff timing is achievable while previous-session post-processing is active. **Not yet tested — Phase 3 scope.**

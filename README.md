@@ -1,26 +1,23 @@
 # noted
 
-`noted` is the local macOS capture agent for the Meeting Intelligence System. It runs as a menubar app, records meeting audio, transcribes on device, runs post-session diarization, and writes session artefacts to disk for later ingestion by `briefing`.
+`noted` is the local macOS capture agent for the Meeting Intelligence System. It runs as a menubar app, records meeting audio on command, transcribes on device with Parakeet-TDT or Whisper, runs post-session speaker diarization, and writes a contract-valid session directory for later ingestion by `briefing`.
 
-This repository is currently in the stripped HushScribe baseline phase. The goal of this phase is a clean, buildable runtime that keeps capture, ASR, and diarization while removing everything that belongs to later system phases.
+## What noted does
 
-## What noted is
+- Accepts a session manifest written by `briefing` and starts recording.
+- Captures room-mic audio (or mic + system audio for online meetings).
+- Transcribes on device using the configured ASR backend.
+- Runs post-session speaker diarization asynchronously after `stop` returns.
+- Writes a canonical session directory including `outputs/completion.json` as the sole terminal outcome signal.
 
-- A macOS 26+ Apple Silicon menubar app.
-- A local audio capture and transcription agent.
-- The owner of runtime recording state and post-session diarization.
-- A producer of session artefacts under this repo's `sessions/` directory by default during the current development baseline.
+## What noted does not do
 
-## What noted is not
+- Does not read calendars or decide which meetings to record.
+- Does not summarise transcripts or call LLMs.
+- Does not write Obsidian notes.
+- Does not include a transcript viewer UI.
 
-- It does not read calendars.
-- It does not decide which meetings should be recorded.
-- It does not summarise transcripts or run LLMs.
-- It does not write Obsidian notes.
-- It does not include a transcript reader or editor UI.
-- It does not ship a Homebrew cask yet.
-
-Those responsibilities belong to `briefing` or later contract-driven phases.
+Those responsibilities belong to `briefing`.
 
 ## Build
 
@@ -35,42 +32,88 @@ cd HushScribe
 swift build
 ```
 
-There are no unit tests in this stripped baseline yet.
+For a distributable app bundle (skips notarization):
 
-## Run
+```bash
+./scripts/release.sh test
+```
 
-The app is an `LSUIElement` menubar app. Launching it should show only the menubar icon. The current menubar menu exposes:
+## CLI
 
-- `Start`
-- `Stop`
-- `Status`
-- `Settings`
-- `Quit noted`
+The primary interface is the CLI, launched through the app bundle:
 
-Manual sessions currently write:
+```bash
+# Validate a manifest before starting
+dist/Noted.app/Contents/MacOS/Noted validate-manifest --manifest /path/to/manifest.json
 
-- `session.json`
-- `transcript.txt`
-- `segments.json`
-- `raw/microphone.wav`
-- `raw/system.wav` when system-audio capture succeeds
-- `diarization.json` when system-audio diarization succeeds
+# Start a session from a manifest
+dist/Noted.app/Contents/MacOS/Noted start --manifest /path/to/manifest.json
+
+# Stop an active session (returns after audio flush; ASR/diarization continue async)
+dist/Noted.app/Contents/MacOS/Noted stop --session-id <session-id>
+
+# Poll status of an active or completed session
+dist/Noted.app/Contents/MacOS/Noted status --session-id <session-id>
+
+# Print app and schema versions
+dist/Noted.app/Contents/MacOS/Noted version
+```
+
+All commands write one JSON line to stdout and diagnostics to stderr. Exit codes and JSON shapes are defined in `vendor/contracts/contracts/cli-contract.md`.
+
+## Session directory layout
+
+Every session writes under the `paths.session_dir` specified in the manifest:
+
+```
+<session_dir>/
+├── manifest.json
+├── audio/
+│   └── raw_room.wav            # room-mic (or raw_mic.wav + raw_system.wav for mic_plus_system)
+├── transcript/
+│   ├── transcript.txt
+│   ├── transcript.json
+│   └── segments.json           # optional
+├── diarization/
+│   └── diarization.json        # when diarization succeeds
+├── outputs/
+│   └── completion.json         # sole terminal outcome source; written last
+├── runtime/
+│   └── status.json             # updated at every phase transition
+└── logs/
+    └── noted.log
+```
 
 ## Permissions
-
-Changing the bundle identifier to `app.noted.macos` means macOS will prompt again for privacy permissions on first launch.
 
 | Permission | Why |
 | --- | --- |
 | Microphone | Captures local speaker audio. |
 | Screen Recording | Enables ScreenCaptureKit system-audio capture for online meetings. |
-| Speech Recognition | Required only when using the Apple Speech backend. |
+
+TCC approvals are per code-signature. Re-signing the app bundle (including debug builds substituted into the dist bundle) revokes prior approvals and requires user confirmation on first post-sign launch.
+
+## Testing
+
+Contract tests in `HushScribe/Tests/NotedContractTests/` validate manifest and completion fixtures against the pinned contracts schema. Run with:
+
+```bash
+cd HushScribe && swift test
+```
+
+## Settings
+
+`~/Library/Application Support/noted/settings.toml` controls ASR backend, model variant, input device, output root, and other runtime preferences. The file is created on first launch with defaults. Reset with:
+
+```bash
+defaults delete app.noted.macos
+```
 
 ## Credits
 
 `noted` starts from a squashed import of [HushScribe](https://github.com/drcursor/HushScribe), which is a fork of [Tome](https://github.com/Gremble-io/Tome) by Gremble-io and traces lineage to [OpenGranola](https://github.com/yazinsai/OpenGranola). Attribution and license notices are preserved in this repository.
 
-Models and libraries retained in this stripped baseline:
+Models and libraries:
 
 - [FluidAudio](https://github.com/FluidInference/FluidAudio) by FluidInference for Parakeet-TDT ASR, VAD, and offline diarization.
 - [WhisperKit](https://github.com/argmaxinc/WhisperKit) by Argmax for local Whisper transcription.

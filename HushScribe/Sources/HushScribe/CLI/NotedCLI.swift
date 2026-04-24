@@ -264,6 +264,17 @@ struct NotedCLI {
         var startedAtString: String?
         do {
             try await transcriptLogger.startSession(descriptor)
+            // Write status before model loading so the parent process knows the child is
+            // alive during CoreML compilation (~30 s on first run after a code-signature change).
+            try RuntimeFiles.writeStatus(
+                sessionID: manifest.sessionID,
+                sessionDir: sessionDir,
+                status: "starting",
+                phase: "loading_models",
+                startedAt: nil,
+                scheduledEndTime: manifest.meeting.scheduledEndTime
+            )
+            appendLog(sessionDir: sessionDir, "loading ASR models")
             await transcriptionEngine.start(
                 locale: Locale(identifier: manifest.transcription.language ?? settings.language),
                 inputDeviceID: settings.defaultInputDevice,
@@ -568,26 +579,45 @@ struct NotedCLI {
     }
 
     private func waitForStartup(sessionID: String, sessionDir: URL) async -> StartupResult {
-        let deadline = Date().addingTimeInterval(90)
-        while Date() < deadline {
+        // Phase 1: child must write any status.json within 30 s (proves it launched).
+        let launchDeadline = Date().addingTimeInterval(30)
+        var childAlive = false
+        while Date() < launchDeadline {
             if let status = RuntimeFiles.readStatus(sessionDir: sessionDir) {
-                if status.status == "recording", status.phase == "capturing" {
-                    return .recording
-                }
-                if status.phase == "failed_startup" {
-                    let error = status.lastError?.lowercased() ?? ""
-                    if error.contains("permission") || error.contains("access") {
-                        return .permission
-                    }
-                    if error.contains("audio") || error.contains("device") || error.contains("mic") {
-                        return .audio
-                    }
-                    return .internal
-                }
+                if let result = checkTerminalStartup(status: status) { return result }
+                childAlive = true
+                break
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+        guard childAlive else { return .internal }
+
+        // Phase 2: child is alive — wait up to 90 s for model loading and capture start.
+        let modelDeadline = Date().addingTimeInterval(90)
+        while Date() < modelDeadline {
+            if let status = RuntimeFiles.readStatus(sessionDir: sessionDir) {
+                if let result = checkTerminalStartup(status: status) { return result }
             }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
         return .internal
+    }
+
+    private func checkTerminalStartup(status: RuntimeStatus) -> StartupResult? {
+        if status.status == "recording", status.phase == "capturing" {
+            return .recording
+        }
+        if status.phase == "failed_startup" {
+            let error = status.lastError?.lowercased() ?? ""
+            if error.contains("permission") || error.contains("access") {
+                return .permission
+            }
+            if error.contains("audio") || error.contains("device") || error.contains("mic") {
+                return .audio
+            }
+            return .internal
+        }
+        return nil
     }
 
     private func waitForCaptureFinalizedAcknowledgement(sessionDir: URL) async {

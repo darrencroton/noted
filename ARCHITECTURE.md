@@ -1,20 +1,35 @@
 # noted Architecture
 
-`noted` is the capture runtime for the Meeting Intelligence System. At this stage it is intentionally small: menubar control, audio capture, ASR, diarization, and local artefact writing.
+`noted` is the capture runtime for the Meeting Intelligence System. It accepts manifests from `briefing`, captures and transcribes audio on device, and hands a completed session directory back to `briefing session-ingest`.
 
-## Current Shape
+## Runtime Shape (Phase 2)
 
 ```
-Menubar
+CLI invocation (noted start --manifest ...)
    |
    v
-SessionController
+NotedCLI (start)
+   |  validates manifest, prepares session dir, writes status.json
    |
-   +--> MicCapture --------+
-   |                       |
-   +--> SystemAudioCapture +--> StreamingTranscriber --> TranscriptLogger
-                           |
-                           +--> OfflineDiarizerManager --> diarization.json
+   +--> spawns __run-session child process
+   |       |
+   |       +--> TranscriptionEngine.start()
+   |       |       |--> MicCapture ---------> raw_room.wav / raw_mic.wav
+   |       |       +--> SystemAudioCapture -> raw_system.wav (mic_plus_system only)
+   |       |                                       |
+   |       |                               StreamingTranscriber
+   |       |                               (FluidAudio VAD + ASRBackend)
+   |       |                                       |
+   |       |                               TranscriptLogger
+   |       |                               (transcript.txt, transcript.json)
+   |       |
+   |       +--> on noted stop --session-id:
+   |               audio flush → capture-finalized handshake
+   |               → OfflineDiarizerManager → diarization.json
+   |               → CompletionWriter → outputs/completion.json
+   |
+   v
+NotedCLI (stop) returns EXIT:0 after audio flush; post-processing runs async
 ```
 
 ## Source Tree
@@ -22,20 +37,25 @@ SessionController
 ```
 HushScribe/Sources/HushScribe/
 ├── App/
-│   ├── NotedApp.swift            # app entry and shared services
-│   ├── SessionController.swift   # start/stop orchestration for manual sessions
-│   └── StatusBarController.swift # menubar menu and small status/settings windows
+│   ├── NotedApp.swift              # app entry and shared services; routes CLI vs. menubar
+│   ├── SessionController.swift     # menubar manual session lifecycle (legacy path)
+│   └── StatusBarController.swift   # menubar menu and status/settings windows
 ├── Audio/
 │   ├── MicCapture.swift
 │   └── SystemAudioCapture.swift
+├── CLI/
+│   ├── Manifest.swift              # manifest model + contract-aware validator
+│   ├── NotedCLI.swift              # start, stop, status, validate-manifest, version, __run-session
+│   └── RuntimeFiles.swift          # registry, active-capture lock, status/stop/completion helpers
 ├── Models/
 │   ├── Models.swift
 │   └── RecordingState.swift
 ├── Settings/
-│   └── AppSettings.swift
+│   ├── AppSettings.swift           # menubar UI preferences (UserDefaults-backed)
+│   └── RuntimeSettings.swift       # CLI runtime settings (TOML-backed, settings.toml)
 ├── Storage/
-│   ├── SessionStore.swift
-│   └── TranscriptLogger.swift
+│   ├── SessionStore.swift          # canonical Phase 2 session directory creation
+│   └── TranscriptLogger.swift      # transcript.txt, transcript.json, diarization.json writers
 ├── Transcription/
 │   ├── ASRBackend.swift
 │   ├── SFSpeechBackend.swift
@@ -46,9 +66,11 @@ HushScribe/Sources/HushScribe/
     └── SettingsView.swift
 ```
 
-The source directory still carries the inherited `HushScribe` path name. The package, executable, bundle display name, and bundle identifier are now `noted`-specific.
+Contract tests: `HushScribe/Tests/NotedContractTests/FixtureContractTests.swift`
 
-## Removed From Runtime Scope
+The source directory still carries the inherited `HushScribe` path name. The package, executable, bundle display name, and bundle identifier are `noted`-specific (`app.noted.macos`).
+
+## Removed From Runtime Scope (at strip)
 
 - MLX summary engine and all Qwen/Gemma model-download logic.
 - Apple NaturalLanguage summary service.
@@ -60,34 +82,38 @@ The source directory still carries the inherited `HushScribe` path name. The pac
 
 Archived files live locally under ignored `archive/hushscribe-strip/` for reference.
 
-## Current Output
+## Session Directory Output
 
-Manual sessions write under the repo-root `sessions/` directory unless changed in Settings:
+Phase 2 canonical output under the manifest-specified `paths.session_dir`:
 
 ```
-<session-id>/
-├── raw/
-│   ├── microphone.wav
-│   └── system.wav
-├── session.json
-├── transcript.txt
-├── segments.json
-└── diarization.json
+<session_dir>/
+├── manifest.json
+├── audio/
+│   └── raw_room.wav                 # room_mic strategy
+│   # OR raw_mic.wav + raw_system.wav  # mic_plus_system strategy
+├── transcript/
+│   ├── transcript.txt
+│   ├── transcript.json
+│   └── segments.json                # optional
+├── diarization/
+│   └── diarization.json             # when diarization enabled and succeeds
+├── outputs/
+│   └── completion.json              # sole terminal outcome source; written last
+├── runtime/
+│   └── status.json                  # atomic rewrite at every phase transition
+└── logs/
+    └── noted.log
 ```
 
-This is a stripped baseline format, not the final cross-repo completion contract.
+`completion.json` is the only file `briefing session-ingest` reads to determine session outcome. It must never be inferred from file presence or log content.
 
-## Coming Later
+## What Comes Next (Phase 3 and Beyond)
 
-Later phases add the contract-driven pieces from the master implementation plan:
-
-- `noted` CLI.
-- Manifest loader and validator.
-- Canonical session directory writer.
-- Runtime status file writer.
-- Completion file writer.
-- End-of-meeting popup.
-- Next-meeting handoff execution from pre-prepared manifests.
+- Phase 3: end-of-meeting popup (`extend`, `switch-next`), auto-stop and auto-switch timers, `runtime/ui_state.json`.
+- Phase 3: `noted start` via menubar with canonical ad hoc manifests (N-23).
+- Phase 4: automatic `briefing session-ingest` invocation after completion (N-21, N-22).
+- Phase 5: crash recovery, retention hooks, online/hybrid capture.
 
 `briefing` remains the owner of calendar interpretation, manifest contents, summarisation, and Obsidian note writing.
 
