@@ -9,6 +9,7 @@
 - Transcribes on device using the configured ASR backend.
 - Runs post-session speaker diarization asynchronously after `stop` returns.
 - Writes a canonical session directory including `outputs/completion.json` as the sole terminal outcome signal.
+- Shows the scheduled end-of-meeting popup and routes Stop, Extend, and Next Meeting actions through the same CLI paths used by automation.
 
 ## What noted does not do
 
@@ -18,6 +19,19 @@
 - Does not include a transcript viewer UI.
 
 Those responsibilities belong to `briefing`.
+
+## Current status
+
+Completed work:
+
+- Phase 2 minimal runtime: manifest validation, canonical session directories, room-mic capture, fast stop, async post-processing, completion files, and contract smoke coverage.
+- Phase 3 end-of-meeting UX: popup, `extend`, `switch-next`, auto-stop/auto-switch, `runtime/ui_state.json`, back-to-back contract tests, and N-25 missing/invalid next-manifest handling.
+
+Remaining polish before Phase 5:
+
+- N-21/N-22 automatic `briefing session-ingest` invocation after completion.
+- N-23 canonical ad hoc Start manifest writer.
+- N-24 integration fixture with `briefing`.
 
 ## Build
 
@@ -51,6 +65,12 @@ dist/Noted.app/Contents/MacOS/Noted start --manifest /path/to/manifest.json
 
 # Stop an active session (returns after audio flush; ASR/diarization continue async)
 dist/Noted.app/Contents/MacOS/Noted stop --session-id <session-id>
+
+# Extend the scheduled end time for an active session
+dist/Noted.app/Contents/MacOS/Noted extend --session-id <session-id> --minutes 10
+
+# Stop the current session and start the pre-planned next meeting
+dist/Noted.app/Contents/MacOS/Noted switch-next --session-id <session-id>
 
 # Poll status of an active or completed session
 dist/Noted.app/Contents/MacOS/Noted status --session-id <session-id>

@@ -23,6 +23,21 @@ This plan assumes the current copied-snapshot mechanism: `vendor/contracts/CONTR
 
 `noted` must not read calendars, infer meeting eligibility, compute next meetings, summarize transcripts, write Obsidian notes, or interpret meeting context. Calendar-driven manifests are written by `briefing`; only ad hoc sessions may be normalized into a full canonical manifest locally.
 
+## Current Status - 2026-04-25
+
+Completed:
+
+- Phase 2 minimal runtime: N-01 through N-13.
+- Step 7 vertical slice with `briefing session-ingest`.
+- Phase 3 end-of-meeting UX and N-25 switch-next invalidation race handling: N-14 through N-20 and N-25.
+
+Remaining before Phase 5 hardening:
+
+- Phase 4 integration support polish: N-21 through N-24.
+- Phase 5 should still wait for real operational data from the completed Phase 2-4 flows.
+
+Local verification on 2026-04-25: `swift test` passes with 20 contract tests and a clean debug build.
+
 ## Cross-Repo Dependency Map
 
 | System phase | noted work | briefing work | Blocks / blocked by |
@@ -188,6 +203,7 @@ Phase 3 (N-14 through N-20) and N-25 are complete. All 20 contract tests pass. B
 - N-21 Add configurable `briefing` command invocation.
 - N-22 Invoke `briefing session-ingest` after completion.
 - N-23 Implement ad hoc full-manifest writer (menubar Start).
+- N-24 Add integration fixture with `briefing`.
 
 ## Highest-Risk Assumptions
 
