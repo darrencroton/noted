@@ -31,10 +31,10 @@ Completed:
 - Step 7 vertical slice with `briefing session-ingest`.
 - Phase 3 end-of-meeting UX and N-25 switch-next invalidation race handling: N-14 through N-20 and N-25.
 
-Remaining before Phase 5 hardening:
+Phase 5 gate:
 
-- Phase 4 integration support polish N-21 through N-24 is complete.
-- Phase 5 should still wait for real operational data from the completed Phase 2-4 flows.
+- No Phase 2-4 tickets remain open. Phase 4 integration support polish N-21 through N-24 is complete.
+- Phase 5 hardening should be prioritised from real operational data from the completed Phase 2-4 flows.
 
 Local verification on 2026-04-25: `swift test` passes with 26 contract tests and a clean debug build.
 
