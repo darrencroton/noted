@@ -21,10 +21,10 @@ struct NotedCLI {
             return stop(options: options)
         case "status":
             return status(options: options)
-        case "extend", "switch-next":
-            writeError("\(command) is reserved for Phase 3 and is not implemented in this runtime.")
-            writeJSON(["ok": false, "error": "not_implemented"])
-            return 6
+        case "extend":
+            return extend(options: options)
+        case "switch-next":
+            return await switchNext(options: options)
         case "__run-session":
             return await runSession(options: options)
         default:
@@ -207,6 +207,209 @@ struct NotedCLI {
         }
     }
 
+    private func extend(options: [String: String]) -> Int {
+        guard let sessionID = options["session-id"] else {
+            writeError("missing --session-id <id>")
+            writeJSON(["ok": false, "error": "missing_session_id"])
+            return 2
+        }
+        guard let minutesStr = options["minutes"], let minutes = Int(minutesStr), minutes > 0 else {
+            writeError("--minutes must be a positive integer")
+            writeJSON(["ok": false, "error": "invalid_minutes"])
+            return 6
+        }
+
+        guard let record = RuntimeFiles.readRegistry(sessionID: sessionID) else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "unknown_session_id"])
+            return 2
+        }
+
+        let sessionDir = URL(fileURLWithPath: record.sessionDir, isDirectory: true)
+        guard let currentStatus = RuntimeFiles.readStatus(sessionDir: sessionDir),
+              currentStatus.status == "recording"
+        else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "session_not_recording"])
+            return 3
+        }
+
+        guard let currentEndTimeStr = currentStatus.scheduledEndTime,
+              let currentEndTime = ISO8601.parseDate(currentEndTimeStr)
+        else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "no_scheduled_end_time"])
+            return 6
+        }
+
+        let newEndTime = currentEndTime.addingTimeInterval(Double(minutes) * 60)
+        let newEndTimeStr = ISO8601.withOffset(newEndTime)
+        let totalExtension = currentStatus.currentExtensionMinutes + minutes
+
+        do {
+            // Update status.json; the session runner picks up the new scheduled_end_time on its
+            // next loop iteration and resets the prompt timer accordingly.
+            try RuntimeFiles.writeStatus(
+                sessionID: sessionID,
+                sessionDir: sessionDir,
+                status: currentStatus.status,
+                phase: currentStatus.phase,
+                startedAt: currentStatus.startedAt,
+                scheduledEndTime: newEndTimeStr,
+                currentExtensionMinutes: totalExtension,
+                preEndPromptShown: currentStatus.preEndPromptShown
+            )
+
+            // Clearing the prompt file causes the session runner to re-fire it at the new time.
+            RuntimeFiles.clearPreEndPrompt(sessionDir: sessionDir)
+
+            var uiState = RuntimeFiles.readUIState(sessionDir: sessionDir) ?? UIState()
+            uiState.extensionCount += 1
+            uiState.lastAction = "extend"
+            uiState.lastActionAt = ISO8601.withOffset(Date())
+            try RuntimeFiles.writeUIState(uiState, to: sessionDir)
+
+            appendLog(sessionDir: sessionDir, "session extended by \(minutes)m, new end: \(newEndTimeStr)")
+
+            writeJSON([
+                "ok": true,
+                "session_id": sessionID,
+                "status": "recording",
+                "current_extension_minutes": totalExtension,
+                "scheduled_end_time": newEndTimeStr,
+            ])
+            return 0
+        } catch {
+            writeError(error.localizedDescription)
+            writeJSON(["ok": false, "session_id": sessionID, "error": "extend_failed"])
+            return 6
+        }
+    }
+
+    private func switchNext(options: [String: String]) async -> Int {
+        guard let sessionID = options["session-id"] else {
+            writeError("missing --session-id <id>")
+            writeJSON(["ok": false, "error": "missing_session_id"])
+            return 2
+        }
+
+        guard let record = RuntimeFiles.readRegistry(sessionID: sessionID) else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "unknown_session_id"])
+            return 2
+        }
+
+        let sessionDir = URL(fileURLWithPath: record.sessionDir, isDirectory: true)
+        guard let currentStatus = RuntimeFiles.readStatus(sessionDir: sessionDir),
+              (currentStatus.status == "recording" || currentStatus.status == "stopping")
+        else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "session_not_recording"])
+            return 3
+        }
+
+        // Read the session's manifest for next_meeting info.
+        let manifestURL = sessionDir.appendingPathComponent("manifest.json")
+        guard let manifestData = try? Data(contentsOf: manifestURL),
+              let manifest = ManifestValidator.validate(data: manifestData).manifest
+        else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "cannot_read_manifest"])
+            return 4
+        }
+
+        guard manifest.nextMeeting.exists, let nextManifestPath = manifest.nextMeeting.manifestPath else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "no_next_meeting"])
+            return 3
+        }
+
+        // Only write the stop request if still recording; if already stopping, the existing
+        // stop reason is authoritative and must not be overwritten.
+        if currentStatus.status == "recording" {
+            do {
+                try RuntimeFiles.writeStopRequest(sessionDir: sessionDir, reason: "auto_switch_to_next_meeting")
+            } catch {
+                writeError(error.localizedDescription)
+                writeJSON(["ok": false, "session_id": sessionID, "error": "stop_request_failed"])
+                return 4
+            }
+        }
+
+        // Wait for the session runner to flush and signal capture-finalized (fast-stop).
+        let stopDeadline = Date().addingTimeInterval(20)
+        var captureFinalized = false
+        while Date() < stopDeadline {
+            if FileManager.default.fileExists(atPath: RuntimeFiles.captureFinalizedURL(sessionDir: sessionDir).path) {
+                captureFinalized = true
+                break
+            }
+            if let s = RuntimeFiles.readStatus(sessionDir: sessionDir),
+               s.status == "completed" || s.status == "completed_with_warnings" || s.status == "failed" {
+                break
+            }
+            try? await Task.sleep(nanoseconds: 100_000_000)
+        }
+
+        guard captureFinalized else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "stop_capture_timeout"])
+            return 4
+        }
+
+        // N-25: Validate before ACK so next-manifest-missing.json is written before the runner
+        // reaches postProcess, regardless of scheduling order between the two processes.
+        let nextManifestURL = URL(fileURLWithPath: nextManifestPath)
+        let nextManifest = ManifestValidator.validate(fileURL: nextManifestURL).manifest
+        if nextManifest == nil {
+            try? RuntimeFiles.writeNextManifestMissing(sessionDir: sessionDir)
+        }
+        try? RuntimeFiles.acknowledgeCaptureFinalized(sessionID: sessionID, sessionDir: sessionDir)
+
+        guard let nextManifest else {
+            appendLog(sessionDir: sessionDir, "switch-next: next manifest missing or invalid: \(nextManifestPath)")
+            writeJSON([
+                "ok": false,
+                "previous_session_id": sessionID,
+                "error": "next_manifest_missing_or_invalid",
+            ])
+            return 8
+        }
+
+        var uiState = RuntimeFiles.readUIState(sessionDir: sessionDir) ?? UIState()
+        uiState.lastAction = "switch_next"
+        uiState.lastActionAt = ISO8601.withOffset(Date())
+        try? RuntimeFiles.writeUIState(uiState, to: sessionDir)
+
+        // Spawn `noted start --manifest <path>` as a subprocess so its stdout is captured
+        // separately from our own output, and both processes run concurrently (the old session's
+        // postProcess and the new session's startup overlap).
+        let executableURL = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0]).absoluteURL
+        let nextProcess = Process()
+        nextProcess.executableURL = executableURL
+        nextProcess.arguments = ["start", "--manifest", nextManifestPath]
+        nextProcess.standardOutput = Pipe()
+        nextProcess.standardError = FileHandle.standardError
+
+        let startExitCode: Int32 = await withCheckedContinuation { continuation in
+            nextProcess.terminationHandler = { p in continuation.resume(returning: p.terminationStatus) }
+            do {
+                try nextProcess.run()
+            } catch {
+                continuation.resume(returning: -1)
+            }
+        }
+
+        if startExitCode == 0 {
+            writeJSON([
+                "ok": true,
+                "previous_session_id": sessionID,
+                "next_session_id": nextManifest.sessionID,
+                "status": "recording",
+            ])
+            return 0
+        } else {
+            writeJSON([
+                "ok": false,
+                "previous_session_id": sessionID,
+                "error": "next_session_start_failed",
+            ])
+            return 8  // current session stopped normally; next session start failed
+        }
+    }
+
     private func status(options: [String: String]) -> Int {
         guard let sessionID = options["session-id"] else {
             writeError("missing --session-id <id>")
@@ -292,17 +495,95 @@ struct NotedCLI {
 
             playRecordingBell()
             startedAtString = ISO8601.withOffset(startedAt)
+
+            // In-memory tracking for values that the `extend` command may update via status.json.
+            var inMemoryScheduledEndTime = manifest.meeting.scheduledEndTime
+            var inMemoryExtensionMinutes = 0
+            var inMemoryPreEndPromptShown = false
+
             try RuntimeFiles.writeStatus(
                 sessionID: manifest.sessionID,
                 sessionDir: sessionDir,
                 status: "recording",
                 phase: "capturing",
                 startedAt: startedAtString,
-                scheduledEndTime: manifest.meeting.scheduledEndTime
+                scheduledEndTime: inMemoryScheduledEndTime
             )
             appendLog(sessionDir: sessionDir, "capture started")
 
+            // Prompt scheduler state. promptFired tracks whether the pre-end-prompt.json is
+            // currently live. graceDeadline is the time at which auto-stop/auto-switch fires.
+            // autoSwitchToNext is set when this process writes its own stop-request so that the
+            // session runner (not the parent CLI) is responsible for launching the next session.
+            var promptFired = false
+            var graceDeadline: Date? = nil
+            var autoSwitchToNext = false
+
             while !FileManager.default.fileExists(atPath: RuntimeFiles.stopRequestURL(sessionDir: sessionDir).path) {
+                // Pick up scheduledEndTime and extensionMinutes changes written by `noted extend`.
+                if let freshStatus = RuntimeFiles.readStatus(sessionDir: sessionDir) {
+                    inMemoryScheduledEndTime = freshStatus.scheduledEndTime
+                    inMemoryExtensionMinutes = freshStatus.currentExtensionMinutes
+                }
+
+                // `noted extend` clears pre-end-prompt.json so the prompt re-fires at the new time.
+                if promptFired,
+                   !FileManager.default.fileExists(atPath: RuntimeFiles.preEndPromptURL(sessionDir: sessionDir).path)
+                {
+                    promptFired = false
+                    graceDeadline = nil
+                }
+
+                let now = Date()
+
+                // Fire prompt if scheduled end time is known and the prompt window has opened.
+                if !promptFired, let scheduledEnd = inMemoryScheduledEndTime.flatMap(ISO8601.parseDate(_:)) {
+                    let promptSeconds = Double(manifest.recordingPolicy.preEndPromptMinutes) * 60
+                    if now >= scheduledEnd.addingTimeInterval(-promptSeconds) {
+                        promptFired = true
+                        inMemoryPreEndPromptShown = true
+                        playEndOfMeetingBeep()
+
+                        let isFollowUp = inMemoryExtensionMinutes > 0
+                        try? RuntimeFiles.writePreEndPrompt(sessionDir: sessionDir, promptAt: now, isFollowUp: isFollowUp)
+                        try? RuntimeFiles.writeStatus(
+                            sessionID: manifest.sessionID,
+                            sessionDir: sessionDir,
+                            status: "recording",
+                            phase: "capturing",
+                            startedAt: startedAtString,
+                            scheduledEndTime: inMemoryScheduledEndTime,
+                            currentExtensionMinutes: inMemoryExtensionMinutes,
+                            preEndPromptShown: true
+                        )
+                        var uiState = RuntimeFiles.readUIState(sessionDir: sessionDir) ?? UIState()
+                        if uiState.promptShownAt == nil { uiState.promptShownAt = ISO8601.withOffset(now) }
+                        try? RuntimeFiles.writeUIState(uiState, to: sessionDir)
+                        appendLog(sessionDir: sessionDir, isFollowUp ? "follow-up prompt fired" : "pre-end prompt fired")
+
+                        // §12.3: grace applies only when next meeting exists; otherwise auto-stop
+                        // fires at scheduledEnd exactly.
+                        if manifest.nextMeeting.exists {
+                            let graceSeconds = Double(manifest.recordingPolicy.noInteractionGraceMinutes) * 60
+                            graceDeadline = scheduledEnd.addingTimeInterval(graceSeconds)
+                        } else {
+                            graceDeadline = scheduledEnd
+                        }
+                    }
+                }
+
+                // Auto-stop or auto-switch once grace period expires with no user interaction.
+                if let deadline = graceDeadline, now >= deadline {
+                    if manifest.nextMeeting.exists, manifest.nextMeeting.manifestPath != nil {
+                        autoSwitchToNext = true
+                        try? RuntimeFiles.writeStopRequest(sessionDir: sessionDir, reason: "auto_switch_to_next_meeting")
+                    } else {
+                        try? RuntimeFiles.writeStopRequest(sessionDir: sessionDir, reason: "scheduled_stop")
+                    }
+                    appendLog(sessionDir: sessionDir, "auto-\(autoSwitchToNext ? "switch" : "stop") triggered")
+                    break
+                }
+
                 try await Task.sleep(nanoseconds: 100_000_000)
             }
 
@@ -313,7 +594,9 @@ struct NotedCLI {
                 status: "stopping",
                 phase: "flushing_audio",
                 startedAt: startedAtString,
-                scheduledEndTime: manifest.meeting.scheduledEndTime
+                scheduledEndTime: inMemoryScheduledEndTime,
+                currentExtensionMinutes: inMemoryExtensionMinutes,
+                preEndPromptShown: inMemoryPreEndPromptShown
             )
             _ = await transcriptionEngine.stop()
             fsyncIfPossible(descriptor.microphoneAudioURL)
@@ -325,18 +608,50 @@ struct NotedCLI {
                 status: "processing",
                 phase: "running_asr",
                 startedAt: startedAtString,
-                scheduledEndTime: manifest.meeting.scheduledEndTime
+                scheduledEndTime: inMemoryScheduledEndTime,
+                currentExtensionMinutes: inMemoryExtensionMinutes,
+                preEndPromptShown: inMemoryPreEndPromptShown
             )
             try RuntimeFiles.writeCaptureFinalized(sessionID: manifest.sessionID, sessionDir: sessionDir)
             RuntimeFiles.releaseActiveCapture(sessionID: manifest.sessionID)
-            await waitForCaptureFinalizedAcknowledgement(sessionDir: sessionDir)
+
+            // For auto-switch: spawn the next session immediately after releasing the capture lock
+            // so both the old session's postProcess and the new session's startup run concurrently.
+            // N-25: validate the next manifest first — it may have been deleted by `briefing watch`.
+            if autoSwitchToNext, let nextPath = manifest.nextMeeting.manifestPath {
+                let nextValidation = ManifestValidator.validate(fileURL: URL(fileURLWithPath: nextPath))
+                if nextValidation.isValid {
+                    let executableURL = Bundle.main.executableURL
+                        ?? URL(fileURLWithPath: CommandLine.arguments[0]).absoluteURL
+                    let nextProcess = Process()
+                    nextProcess.executableURL = executableURL
+                    nextProcess.arguments = ["start", "--manifest", nextPath]
+                    nextProcess.standardOutput = Pipe()
+                    nextProcess.standardError = FileHandle.standardError
+                    try? nextProcess.run()
+                    appendLog(sessionDir: sessionDir, "auto-switched: spawned next session")
+                } else {
+                    try? RuntimeFiles.writeNextManifestMissing(sessionDir: sessionDir)
+                    appendLog(sessionDir: sessionDir, "auto-switch: next manifest missing or invalid: \(nextPath)")
+                }
+            }
+
+            // For user-driven stop/switch-next, wait for the parent CLI to acknowledge
+            // capture-finalized before starting postProcess. For auto-switch initiated by this
+            // process, skip the wait — no parent is listening.
+            if !autoSwitchToNext {
+                await waitForCaptureFinalizedAcknowledgement(sessionDir: sessionDir)
+            }
 
             try await postProcess(
                 manifest: manifest,
                 descriptor: descriptor,
                 transcriptionEngine: transcriptionEngine,
                 startedAt: startedAtString,
-                stopReason: stopReason
+                stopReason: stopReason,
+                scheduledEndTime: inMemoryScheduledEndTime,
+                currentExtensionMinutes: inMemoryExtensionMinutes,
+                preEndPromptShown: inMemoryPreEndPromptShown
             )
             return 0
         } catch {
@@ -358,7 +673,10 @@ struct NotedCLI {
         descriptor: SessionDescriptor,
         transcriptionEngine: TranscriptionEngine,
         startedAt: String?,
-        stopReason: String
+        stopReason: String,
+        scheduledEndTime: String?,
+        currentExtensionMinutes: Int,
+        preEndPromptShown: Bool = false
     ) async throws {
         var warnings: [String] = []
         var errors: [String] = []
@@ -366,6 +684,11 @@ struct NotedCLI {
             || FileManager.default.fileExists(atPath: descriptor.systemAudioURL.path)
         let transcriptOK = FileManager.default.fileExists(atPath: descriptor.transcriptDirectory.appendingPathComponent("transcript.txt").path)
             && FileManager.default.fileExists(atPath: descriptor.transcriptDirectory.appendingPathComponent("transcript.json").path)
+
+        // N-25: include warning when switch-next found the next manifest had been invalidated.
+        if FileManager.default.fileExists(atPath: RuntimeFiles.nextManifestMissingURL(sessionDir: descriptor.directory).path) {
+            warnings.append("next_manifest_missing")
+        }
 
         var diarizationOK = false
         if manifest.transcription.diarizationEnabled {
@@ -375,7 +698,9 @@ struct NotedCLI {
                 status: "processing",
                 phase: "running_diarization",
                 startedAt: startedAt,
-                scheduledEndTime: manifest.meeting.scheduledEndTime
+                scheduledEndTime: scheduledEndTime,
+                currentExtensionMinutes: currentExtensionMinutes,
+                preEndPromptShown: preEndPromptShown
             )
             let diarizationAudio = FileManager.default.fileExists(atPath: descriptor.systemAudioURL.path)
                 ? descriptor.systemAudioURL
@@ -400,7 +725,9 @@ struct NotedCLI {
             status: "processing",
             phase: "writing_outputs",
             startedAt: startedAt,
-            scheduledEndTime: manifest.meeting.scheduledEndTime
+            scheduledEndTime: scheduledEndTime,
+            currentExtensionMinutes: currentExtensionMinutes,
+            preEndPromptShown: preEndPromptShown
         )
 
         let terminalStatus: String
@@ -432,7 +759,9 @@ struct NotedCLI {
             status: terminalStatus,
             phase: "finished",
             startedAt: startedAt,
-            scheduledEndTime: manifest.meeting.scheduledEndTime,
+            scheduledEndTime: scheduledEndTime,
+            currentExtensionMinutes: currentExtensionMinutes,
+            preEndPromptShown: preEndPromptShown,
             lastError: errors.first
         )
         appendLog(sessionDir: descriptor.directory, "completion written: \(terminalStatus)")
@@ -628,8 +957,6 @@ struct NotedCLI {
             }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
-
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
     }
 
     private func startupFailure(sessionID: String, sessionDir: URL, code: Int) -> Int {
@@ -742,6 +1069,15 @@ struct NotedCLI {
 
     private func playRecordingBell() {
         if let sound = NSSound(named: "Glass") {
+            sound.play()
+        } else {
+            NSSound.beep()
+        }
+    }
+
+    // Distinct from the recording-start bell (§12.1) — uses "Ping" so the two cues differ.
+    private func playEndOfMeetingBeep() {
+        if let sound = NSSound(named: "Ping") {
             sound.play()
         } else {
             NSSound.beep()

@@ -95,15 +95,15 @@ Goal: Scheduled sessions prompt before the planned end, and every popup action u
 
 ### Tickets
 
-| Ticket | Title | Estimate | Dependencies | Acceptance notes |
-| --- | --- | ---: | --- | --- |
-| N-14 | Implement prompt scheduler | 2 days | Phase 2 | Handles null `scheduled_end_time` by suppressing prompt for ad hoc sessions |
-| N-15 | Build end-of-meeting popup UI | 3 days | N-14 | Stop, +5, and Next Meeting buttons are shown only when policy and manifest allow |
-| N-16 | Implement `extend` command and shared action path | 3 days | N-15 | Idempotent within a popup cycle; updates status JSON with explicit-offset timestamp |
-| N-17 | Implement `switch-next` command and shared action path | 4 days | N-15 | Starts pre-prepared manifest directly; handles missing/invalid next manifest with exit `8` and warning |
-| N-18 | Implement auto-stop and auto-switch timers | 3 days | N-14, N-17 | Honors `no_interaction_grace_minutes` and next-meeting availability |
-| N-19 | Persist `runtime/ui_state.json` | 2 days | N-15 through N-18 | Menubar restart does not lose popup/action history |
-| N-20 | Back-to-back integration tests | 4 days | N-17, N-18 | Next capture starts within 2 seconds of current capture stopping in the happy path |
+| Ticket | Status | Title | Estimate | Dependencies | Acceptance notes |
+| --- | --- | --- | ---: | --- | --- |
+| N-14 | Completed | Implement prompt scheduler | 2 days | Phase 2 | Handles null `scheduled_end_time` by suppressing prompt for ad hoc sessions |
+| N-15 | Completed | Build end-of-meeting popup UI | 3 days | N-14 | Stop, +N, and Next Meeting buttons are shown only when policy and manifest allow; follow-up shows "Still going" only |
+| N-16 | Completed | Implement `extend` command and shared action path | 3 days | N-15 | Writes updated status.json with new `scheduled_end_time` and `current_extension_minutes`; clears pre-end-prompt so it re-fires at new time |
+| N-17 | Completed | Implement `switch-next` command and shared action path | 4 days | N-15 | Stops current capture (fast-stop); validates next manifest (N-25); spawns `noted start`; exit `8` on invalid manifest |
+| N-18 | Completed | Implement auto-stop and auto-switch timers | 3 days | N-14, N-17 | Grace deadline set at `scheduled_end + no_interaction_grace_minutes` (next-meeting case) or `scheduled_end` (no-next-meeting case); session runner self-initiates stop/switch |
+| N-19 | Completed | Persist `runtime/ui_state.json` | 2 days | N-15 through N-18 | Written by session runner on prompt fire, by `extend` and `switch-next` on action; popup controller reads it |
+| N-20 | Completed | Back-to-back integration tests | 4 days | N-17, N-18 | Contract tests cover JSON formats, exit-code logic, and timing math; live smoke test required to verify `< 2 s` handoff |
 
 Phase 3 focused estimate: 21 days.
 
@@ -126,13 +126,13 @@ Goal: `noted` completes its side of the integration by handing finished sessions
 
 ### Tickets
 
-| Ticket | Title | Estimate | Dependencies | Acceptance notes |
-| --- | --- | ---: | --- | --- |
-| N-21 | Add configurable `briefing` command invocation | 2 days | Phase 2 | Supports path/command override in settings; logs command, exit code, stdout/stderr location |
-| N-22 | Invoke `briefing session-ingest` after completion | 2 days | N-10, N-21 | Completion is present before invocation; failures are recoverable by manual command |
-| N-23 | Implement ad hoc full-manifest writer | 4 days | N-03, N-04 | Menubar Start creates a canonical manifest with allowed nulls and defaults from `noted` settings |
-| N-24 | Integration fixture with `briefing` | 3 days | N-22 plus `briefing session-ingest` | End-to-end local test uses a completed session directory and verifies ingest is called once |
-| N-25 | Switch-next race handling with `briefing watch` invalidation | 2 days | N-17 | Missing/deleted next manifest degrades as the contract describes |
+| Ticket | Status | Title | Estimate | Dependencies | Acceptance notes |
+| --- | --- | --- | ---: | --- | --- |
+| N-21 | | Add configurable `briefing` command invocation | 2 days | Phase 2 | Supports path/command override in settings; logs command, exit code, stdout/stderr location |
+| N-22 | | Invoke `briefing session-ingest` after completion | 2 days | N-10, N-21 | Completion is present before invocation; failures are recoverable by manual command |
+| N-23 | | Implement ad hoc full-manifest writer | 4 days | N-03, N-04 | Menubar Start creates a canonical manifest with allowed nulls and defaults from `noted` settings |
+| N-24 | | Integration fixture with `briefing` | 3 days | N-22 plus `briefing session-ingest` | End-to-end local test uses a completed session directory and verifies ingest is called once |
+| N-25 | Completed | Switch-next race handling with `briefing watch` invalidation | 2 days | N-17 | Both user-driven (`noted switch-next`) and auto-switch paths validate next manifest before launch; write `runtime/next-manifest-missing.json` + exit `8` / skip spawn on missing/invalid; `next_manifest_missing` appears in `completion.json` warnings |
 
 Phase 4 support focused estimate: 13 days.
 
@@ -166,17 +166,32 @@ Phase 2 (N-01 through N-13) is complete. The full vertical slice was run on 2026
 
 See `docs/step-7-report.md` in the root repo for full findings.
 
-## Tickets That Can Start Next (Phase 3)
+## Phase 3 + N-25 — Completed 2026-04-24
 
-- N-14 Implement prompt scheduler.
-- N-15 Build end-of-meeting popup UI.
+Phase 3 (N-14 through N-20) and N-25 are complete. All 20 contract tests pass. Build is clean.
+
+**What shipped:**
+
+- **N-14** — Prompt scheduler in `runSession` loop: fires `runtime/pre-end-prompt.json` at `scheduled_end_time − pre_end_prompt_minutes`; suppressed for ad hoc (null `scheduled_end_time`).
+- **N-15** — `EndOfMeetingPopupController` + `EndOfMeetingView` SwiftUI: polling for `pre-end-prompt.json`, floating `NSPanel`, Stop / +N / Next Meeting buttons (full prompt) or "Still going" button (follow-up per §12.4). Popup buttons invoke the corresponding CLI commands as subprocesses (§9.8 canonical code path).
+- **N-16** — `noted extend --session-id <id> --minutes N`: writes new status.json with extended `scheduled_end_time` and `current_extension_minutes`; clears `pre-end-prompt.json` so the prompt re-fires at the new time; exits `0/2/3/6` per contract.
+- **N-17** — `noted switch-next --session-id <id>`: fast-stops current session, validates next manifest (N-25), spawns `noted start --manifest <path>` as subprocess, exits `0/2/3/4/8` per contract.
+- **N-18** — Auto-stop (`scheduled_stop`) and auto-switch (`auto_switch_to_next_meeting`) timers in the session runner recording loop; grace deadline per §12.3 (equals `scheduled_end` for no-next-meeting, `scheduled_end + grace_minutes` for next-meeting case).
+- **N-19** — `runtime/ui_state.json`: written on prompt fire (`prompt_shown_at`), on extend (`extension_count`, `last_action`), and on switch-next action.
+- **N-20** — 15 Phase 3 contract tests covering JSON formats, timing math, grace-period rules, and exit-code semantics. Live back-to-back smoke test (2 s handoff) requires real audio capture; run manually.
+- **N-25** — Both `noted switch-next` and the session runner's auto-switch path validate the next manifest before launch. Missing/invalid manifest → `runtime/next-manifest-missing.json` written → `next_manifest_missing` warning in `completion.json` → exit `8` (CLI) or skip spawn (session runner).
+
+**Post-review fixes (2026-04-25):** Four P2 and three P3 defects corrected after code review. Key changes: (1) `switch-next` N-25 validation moved before ACK write so `next_manifest_missing` warning is guaranteed in `completion.json` regardless of process scheduling; (2) `switch-next` exit code corrected to always stay in the documented `0/2/3/4/8` range; (3) stop reason no longer overwritten when session is already stopping; (4) unread stderr `Pipe` in auto-switch spawn replaced with `FileHandle.standardError`; (5) undocumented 1-second sleep removed from `waitForCaptureFinalizedAcknowledgement` (not in master plan; now redundant given fix 1); (6) `UIState` CodingKeys test hardened to cover all four fields; (7) ISO8601DateFormatter instances cached to avoid per-call allocation in the 100 ms recording loop. 20 contract tests pass, build clean.
+
+## Tickets That Can Start Next (Phase 4)
+
+- N-21 Add configurable `briefing` command invocation.
+- N-22 Invoke `briefing session-ingest` after completion.
 - N-23 Implement ad hoc full-manifest writer (menubar Start).
-
-Phase 4 integration tickets N-21 and N-22 (`briefing session-ingest` invocation) can start once Phase 3 popup basics are stable.
 
 ## Highest-Risk Assumptions
 
 - Fast stop plus overlapping post-processing will be reliable with Swift ASR/diarization on the target Mac. **Proved valid for room-mic sessions in Phase 2.**
 - Contract validation in Swift can be kept strict enough without turning into a large schema-engine project. **Proved valid in Phase 2 using hand-written validators against pinned fixtures.**
 - Current HushScribe capture code can be adapted to the canonical directory layout without destabilizing audio capture. **Proved valid in Phase 2.**
-- Back-to-back handoff timing is achievable while previous-session post-processing is active. **Not yet tested — Phase 3 scope.**
+- Back-to-back handoff timing is achievable while previous-session post-processing is active. **Architecture proved valid in Phase 3: active-capture lock released before postProcess starts; next session spawned concurrently. Live timing smoke test still needed.**

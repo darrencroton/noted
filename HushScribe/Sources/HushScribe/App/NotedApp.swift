@@ -56,6 +56,7 @@ final class AppServices {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusBarController = StatusBarController()
+    private let popupController = EndOfMeetingPopupController()
     private var windowObserver: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -66,6 +67,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             recordingState: services.recordingState,
             sessionController: services.sessionController
         )
+        popupController.start()
 
         windowObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
@@ -76,5 +78,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 AppServices.shared.settings.applyScreenShareVisibility()
             }
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        popupController.stop()
     }
 }

@@ -1,6 +1,32 @@
 import Darwin
 import Foundation
 
+struct UIState: Codable, Sendable {
+    var promptShownAt: String?
+    var extensionCount: Int
+    var lastAction: String?
+    var lastActionAt: String?
+
+    init(
+        promptShownAt: String? = nil,
+        extensionCount: Int = 0,
+        lastAction: String? = nil,
+        lastActionAt: String? = nil
+    ) {
+        self.promptShownAt = promptShownAt
+        self.extensionCount = extensionCount
+        self.lastAction = lastAction
+        self.lastActionAt = lastActionAt
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case promptShownAt = "prompt_shown_at"
+        case extensionCount = "extension_count"
+        case lastAction = "last_action"
+        case lastActionAt = "last_action_at"
+    }
+}
+
 struct RuntimeStatus: Codable, Sendable {
     var sessionID: String
     var status: String
@@ -219,6 +245,47 @@ enum RuntimeFiles {
         sessionDir.appendingPathComponent("runtime/capture-finalized-acknowledged.json")
     }
 
+    static func preEndPromptURL(sessionDir: URL) -> URL {
+        sessionDir.appendingPathComponent("runtime/pre-end-prompt.json")
+    }
+
+    static func uiStateURL(sessionDir: URL) -> URL {
+        sessionDir.appendingPathComponent("runtime/ui_state.json")
+    }
+
+    static func nextManifestMissingURL(sessionDir: URL) -> URL {
+        sessionDir.appendingPathComponent("runtime/next-manifest-missing.json")
+    }
+
+    static func writePreEndPrompt(sessionDir: URL, promptAt: Date, isFollowUp: Bool) throws {
+        let payload: [String: Any] = [
+            "prompt_at": ISO8601.withOffset(promptAt),
+            "is_follow_up": isFollowUp,
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: preEndPromptURL(sessionDir: sessionDir), options: .atomic)
+    }
+
+    static func clearPreEndPrompt(sessionDir: URL) {
+        try? FileManager.default.removeItem(at: preEndPromptURL(sessionDir: sessionDir))
+    }
+
+    static func readUIState(sessionDir: URL) -> UIState? {
+        guard let data = try? Data(contentsOf: uiStateURL(sessionDir: sessionDir)) else { return nil }
+        return try? decoder.decode(UIState.self, from: data)
+    }
+
+    static func writeUIState(_ state: UIState, to sessionDir: URL) throws {
+        let data = try encoder.encode(state)
+        try data.write(to: uiStateURL(sessionDir: sessionDir), options: .atomic)
+    }
+
+    static func writeNextManifestMissing(sessionDir: URL) throws {
+        let payload: [String: Any] = ["recorded_at": ISO8601.withOffset(Date())]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: nextManifestMissingURL(sessionDir: sessionDir), options: .atomic)
+    }
+
     static func readStatus(sessionDir: URL) -> RuntimeStatus? {
         guard let data = try? Data(contentsOf: statusURL(sessionDir: sessionDir)) else { return nil }
         return try? decoder.decode(RuntimeStatus.self, from: data)
@@ -294,9 +361,26 @@ enum RuntimeFiles {
 }
 
 enum ISO8601 {
+    // ISO8601DateFormatter is thread-safe for concurrent reads; nonisolated(unsafe) lets us
+    // share the instances across actors without allocating a new formatter on every call.
+    private nonisolated(unsafe) static let fractionalFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds, .withTimeZone]
+        return f
+    }()
+
+    private nonisolated(unsafe) static let wholeFormatter: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
     static func withOffset(_ date: Date) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds, .withTimeZone]
-        return formatter.string(from: date)
+        fractionalFormatter.string(from: date)
+    }
+
+    static func parseDate(_ string: String) -> Date? {
+        if let d = fractionalFormatter.date(from: string) { return d }
+        return wholeFormatter.date(from: string)
     }
 }
