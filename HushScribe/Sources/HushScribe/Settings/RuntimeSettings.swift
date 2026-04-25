@@ -8,8 +8,15 @@ struct RuntimeSettings: Sendable {
     var asrModelVariant: String
     var defaultInputDevice: AudioDeviceID
     var outputRoot: String
+    var adHocNoteDirectory: String
     var sysVadThreshold: Double
     var hideFromScreenShare: Bool
+    var briefingCommand: String
+    var ingestAfterCompletion: Bool
+    var diarizationEnabled: Bool
+    var defaultExtensionMinutes: Int
+    var preEndPromptMinutes: Int
+    var noInteractionGraceMinutes: Int
 
     static var settingsURL: URL {
         FileManager.default.homeDirectoryForCurrentUser
@@ -28,8 +35,15 @@ struct RuntimeSettings: Sendable {
             asrModelVariant: "parakeet-v3",
             defaultInputDevice: 0,
             outputRoot: defaultOutputRoot,
+            adHocNoteDirectory: defaultOutputRoot + "/ad-hoc-notes",
             sysVadThreshold: 0.92,
-            hideFromScreenShare: true
+            hideFromScreenShare: true,
+            briefingCommand: "briefing",
+            ingestAfterCompletion: true,
+            diarizationEnabled: true,
+            defaultExtensionMinutes: 5,
+            preEndPromptMinutes: 5,
+            noInteractionGraceMinutes: 5
         )
 
         guard let contents = try? String(contentsOf: settingsURL, encoding: .utf8) else {
@@ -45,8 +59,15 @@ struct RuntimeSettings: Sendable {
             asrModelVariant: values["asr_model_variant"] ?? defaults.asrModelVariant,
             defaultInputDevice: AudioDeviceID(Int(values["default_input_device"] ?? "") ?? Int(defaults.defaultInputDevice)),
             outputRoot: values["output_root"] ?? defaults.outputRoot,
+            adHocNoteDirectory: values["ad_hoc_note_directory"] ?? defaults.adHocNoteDirectory,
             sysVadThreshold: Double(values["sys_vad_threshold"] ?? "") ?? defaults.sysVadThreshold,
-            hideFromScreenShare: Bool(values["hide_from_screen_share"] ?? "") ?? defaults.hideFromScreenShare
+            hideFromScreenShare: Bool(values["hide_from_screen_share"] ?? "") ?? defaults.hideFromScreenShare,
+            briefingCommand: values["briefing_command"] ?? defaults.briefingCommand,
+            ingestAfterCompletion: Bool(values["ingest_after_completion"] ?? "") ?? defaults.ingestAfterCompletion,
+            diarizationEnabled: Bool(values["diarization_enabled"] ?? "") ?? defaults.diarizationEnabled,
+            defaultExtensionMinutes: Int(values["default_extension_minutes"] ?? "") ?? defaults.defaultExtensionMinutes,
+            preEndPromptMinutes: Int(values["pre_end_prompt_minutes"] ?? "") ?? defaults.preEndPromptMinutes,
+            noInteractionGraceMinutes: Int(values["no_interaction_grace_minutes"] ?? "") ?? defaults.noInteractionGraceMinutes
         )
     }
 
@@ -60,14 +81,25 @@ struct RuntimeSettings: Sendable {
         asr_model_variant = "\(Self.escape(asrModelVariant))"
         default_input_device = \(Int(defaultInputDevice))
         output_root = "\(Self.escape(outputRoot))"
+        ad_hoc_note_directory = "\(Self.escape(adHocNoteDirectory))"
         sys_vad_threshold = \(sysVadThreshold)
         hide_from_screen_share = \(hideFromScreenShare)
+        briefing_command = "\(Self.escape(briefingCommand))"
+        ingest_after_completion = \(ingestAfterCompletion)
+        diarization_enabled = \(diarizationEnabled)
+        default_extension_minutes = \(defaultExtensionMinutes)
+        pre_end_prompt_minutes = \(preEndPromptMinutes)
+        no_interaction_grace_minutes = \(noInteractionGraceMinutes)
         """
         try contents.write(to: Self.settingsURL, atomically: true, encoding: .utf8)
     }
 
     var outputRootURL: URL {
         URL(fileURLWithPath: NSString(string: outputRoot).expandingTildeInPath, isDirectory: true)
+    }
+
+    var adHocNoteDirectoryURL: URL {
+        URL(fileURLWithPath: NSString(string: adHocNoteDirectory).expandingTildeInPath, isDirectory: true)
     }
 
     var transcriptionModel: TranscriptionModel {

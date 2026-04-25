@@ -55,8 +55,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
         menu.addItem(.separator())
 
-        let start = makeItem("Start requires manifest", action: #selector(startRecording))
-        start.isEnabled = false
+        let start = makeItem("Start Ad Hoc Session", action: #selector(startRecording))
+        start.isEnabled = RuntimeFiles.readLiveActiveCapture() == nil
         menu.addItem(start)
 
         menu.addItem(makeItem("Status", action: #selector(showStatus)))
@@ -107,7 +107,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     private func currentRuntimeStatus() -> RuntimeStatus? {
-        if let active = RuntimeFiles.readActiveCapture() {
+        if let active = RuntimeFiles.readLiveActiveCapture() {
             return RuntimeFiles.readStatus(sessionDir: URL(fileURLWithPath: active.sessionDir, isDirectory: true))
         }
         if let latest = RuntimeFiles.latestRegistryRecord() {
@@ -128,7 +128,23 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func startRecording() {
-        NSSound.beep()
+        Task {
+            let settings = RuntimeSettings.load()
+            do {
+                let writer = AdHocManifestWriter(settings: settings)
+                let written = try writer.writeManifest()
+                let executableURL = Bundle.main.executableURL
+                    ?? URL(fileURLWithPath: CommandLine.arguments[0]).absoluteURL
+                let process = Process()
+                process.executableURL = executableURL
+                process.arguments = ["start", "--manifest", written.manifestURL.path]
+                process.standardOutput = FileHandle.standardError
+                process.standardError = FileHandle.standardError
+                try process.run()
+            } catch {
+                NSSound.beep()
+            }
+        }
     }
 
     @objc private func stopRecording() {

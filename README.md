@@ -26,12 +26,11 @@ Completed work:
 
 - Phase 2 minimal runtime: manifest validation, canonical session directories, room-mic capture, fast stop, async post-processing, completion files, and contract smoke coverage.
 - Phase 3 end-of-meeting UX: popup, `extend`, `switch-next`, auto-stop/auto-switch, `runtime/ui_state.json`, back-to-back contract tests, and N-25 missing/invalid next-manifest handling.
+- Phase 4 integration polish: configurable `briefing` command handoff, automatic `briefing session-ingest` invocation after completion, canonical ad hoc menubar Start manifests, and local smoke/runbook coverage with `briefing`.
 
-Remaining polish before Phase 5:
+Remaining before Phase 5:
 
-- N-21/N-22 automatic `briefing session-ingest` invocation after completion.
-- N-23 canonical ad hoc Start manifest writer.
-- N-24 integration fixture with `briefing`.
+- Operational soak with real meetings before Phase 5 hardening.
 
 ## Build
 
@@ -81,6 +80,24 @@ dist/Noted.app/Contents/MacOS/Noted version
 
 All commands write one JSON line to stdout and diagnostics to stderr. Exit codes and JSON shapes are defined in `vendor/contracts/contracts/cli-contract.md`.
 
+## Settings
+
+Runtime settings live at `~/Library/Application Support/noted/settings.toml`. Relevant Meeting Intelligence keys:
+
+```toml
+briefing_command = "briefing"
+ingest_after_completion = true
+ad_hoc_note_directory = "/path/to/ad-hoc/notes"
+```
+
+After any terminal `outputs/completion.json` is written, `noted` invokes:
+
+```bash
+briefing session-ingest --session-dir <session_dir>
+```
+
+The handoff does not mutate `completion.json`. `noted` records the command, exit code, and stdout/stderr log paths in `logs/noted.log`; the captured streams are written to `logs/briefing-ingest.stdout.log` and `logs/briefing-ingest.stderr.log`.
+
 ## Session directory layout
 
 Every session writes under the `paths.session_dir` specified in the manifest:
@@ -101,7 +118,9 @@ Every session writes under the `paths.session_dir` specified in the manifest:
 ├── runtime/
 │   └── status.json             # updated at every phase transition
 └── logs/
-    └── noted.log
+    ├── noted.log
+    ├── briefing-ingest.stdout.log  # when automatic ingest runs
+    └── briefing-ingest.stderr.log  # when automatic ingest runs
 ```
 
 ## Permissions

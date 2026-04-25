@@ -662,7 +662,6 @@ struct NotedCLI {
                 startedAt: startedAtString,
                 error: error.localizedDescription
             )
-            RuntimeFiles.releaseActiveCapture(sessionID: manifest.sessionID)
             return 6
         }
     }
@@ -765,6 +764,12 @@ struct NotedCLI {
             lastError: errors.first
         )
         appendLog(sessionDir: descriptor.directory, "completion written: \(terminalStatus)")
+        invokeCompletionHandoff(
+            settings: RuntimeSettings.load(),
+            sessionID: manifest.sessionID,
+            sessionDir: descriptor.directory,
+            terminalStatus: terminalStatus
+        )
     }
 
     private func writeStartupFailure(manifest: SessionManifest, sessionDir: URL, message: String) async throws {
@@ -792,7 +797,14 @@ struct NotedCLI {
         )
         let data = try RuntimeFiles.encoder.encode(completion)
         try data.write(to: sessionDir.appendingPathComponent("outputs/completion.json"), options: .atomic)
+        appendLog(sessionDir: sessionDir, "completion written: failed")
         RuntimeFiles.releaseActiveCapture(sessionID: manifest.sessionID)
+        invokeCompletionHandoff(
+            settings: RuntimeSettings.load(),
+            sessionID: manifest.sessionID,
+            sessionDir: sessionDir,
+            terminalStatus: "failed"
+        )
     }
 
     private func writeProcessingFailure(
@@ -827,6 +839,14 @@ struct NotedCLI {
         )
         let data = try RuntimeFiles.encoder.encode(completion)
         try data.write(to: sessionDir.appendingPathComponent("outputs/completion.json"), options: .atomic)
+        appendLog(sessionDir: sessionDir, "completion written: \(terminalStatus)")
+        RuntimeFiles.releaseActiveCapture(sessionID: manifest.sessionID)
+        invokeCompletionHandoff(
+            settings: RuntimeSettings.load(),
+            sessionID: manifest.sessionID,
+            sessionDir: sessionDir,
+            terminalStatus: terminalStatus
+        )
     }
 
     private func processingArtefacts(sessionDir: URL, audioStrategy: String) -> (audioOK: Bool, transcriptOK: Bool, diarizationOK: Bool) {
@@ -898,6 +918,66 @@ struct NotedCLI {
         process.standardError = logHandle
         try process.run()
         return process
+    }
+
+    private func invokeCompletionHandoff(
+        settings: RuntimeSettings,
+        sessionID: String,
+        sessionDir: URL,
+        terminalStatus: String
+    ) {
+        guard settings.ingestAfterCompletion else {
+            appendLog(sessionDir: sessionDir, "briefing ingest skipped: ingest_after_completion=false")
+            return
+        }
+
+        let command = settings.briefingCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else {
+            appendLog(sessionDir: sessionDir, "briefing ingest skipped: briefing_command is empty")
+            return
+        }
+
+        let logsDir = sessionDir.appendingPathComponent("logs", isDirectory: true)
+        let stdoutURL = logsDir.appendingPathComponent("briefing-ingest.stdout.log")
+        let stderrURL = logsDir.appendingPathComponent("briefing-ingest.stderr.log")
+        do {
+            try FileManager.default.createDirectory(at: logsDir, withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: stdoutURL.path, contents: nil)
+            FileManager.default.createFile(atPath: stderrURL.path, contents: nil)
+            let stdoutHandle = try FileHandle(forWritingTo: stdoutURL)
+            let stderrHandle = try FileHandle(forWritingTo: stderrURL)
+
+            let process = Process()
+            if command.contains("/") {
+                process.executableURL = URL(fileURLWithPath: NSString(string: command).expandingTildeInPath)
+                process.arguments = ["session-ingest", "--session-dir", sessionDir.path]
+            } else {
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                process.arguments = [command, "session-ingest", "--session-dir", sessionDir.path]
+            }
+            process.standardOutput = stdoutHandle
+            process.standardError = stderrHandle
+            defer {
+                try? stdoutHandle.close()
+                try? stderrHandle.close()
+            }
+
+            appendLog(
+                sessionDir: sessionDir,
+                "briefing ingest starting: command=\(command) session_id=\(sessionID) terminal_status=\(terminalStatus) stdout=\(stdoutURL.path) stderr=\(stderrURL.path)"
+            )
+            try process.run()
+            process.waitUntilExit()
+            appendLog(
+                sessionDir: sessionDir,
+                "briefing ingest completed: command=\(command) exit_code=\(process.terminationStatus) session_id=\(sessionID) terminal_status=\(terminalStatus) stdout=\(stdoutURL.path) stderr=\(stderrURL.path)"
+            )
+        } catch {
+            appendLog(
+                sessionDir: sessionDir,
+                "briefing ingest failed to start: command=\(command) session_id=\(sessionID) error=\(error.localizedDescription) stdout=\(stdoutURL.path) stderr=\(stderrURL.path)"
+            )
+        }
     }
 
     private enum StartupResult {
@@ -1095,7 +1175,7 @@ private struct CLIError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-private enum ContractSnapshot {
+enum ContractSnapshot {
     static var appVersion: String {
         if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
             return version

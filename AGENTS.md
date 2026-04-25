@@ -49,7 +49,7 @@ Archived HushScribe source and website files live locally under ignored `archive
 ## Architecture Notes
 
 - **Menubar app.** `LSUIElement = true`; launching creates only a menubar icon. CLI invocations bypass the menubar and run headlessly.
-- **Phase 2 CLI runtime.** `noted start --manifest`, `stop`, `status`, `validate-manifest`, and `version` are all implemented. The menubar Start action is disabled until Phase 3 (canonical ad hoc manifests).
+- **Phase 2 CLI runtime.** `noted start --manifest`, `stop`, `status`, `validate-manifest`, and `version` are all implemented. The menubar Start action writes a canonical ad hoc manifest and routes through `noted start --manifest`.
 - **Dual audio streams.** `TranscriptionEngine` owns `MicCapture` and `SystemAudioCapture`. Each stream feeds a `StreamingTranscriber`.
 - **ASR pipeline.** `StreamingTranscriber` runs FluidAudio VAD and then the selected `ASRBackend`.
 - **Post-session diarization.** `OfflineDiarizerManager` runs after stop against the captured audio and writes `diarization/diarization.json` when successful.
@@ -64,6 +64,8 @@ Archived HushScribe source and website files live locally under ignored `archive
   outputs/completion.json     # sole terminal outcome source; written last
   runtime/status.json         # updated at every phase transition
   logs/noted.log
+  logs/briefing-ingest.stdout.log  # when automatic briefing handoff runs
+  logs/briefing-ingest.stderr.log  # when automatic briefing handoff runs
   ```
 
 ## Dependencies

@@ -223,6 +223,11 @@ enum RuntimeFiles {
         return try? decoder.decode(ActiveCaptureRecord.self, from: data)
     }
 
+    static func readLiveActiveCapture() -> ActiveCaptureRecord? {
+        guard let active = readActiveCapture(), processIsRunning(active.pid) else { return nil }
+        return active
+    }
+
     static func releaseActiveCapture(sessionID: String) {
         guard let active = readActiveCapture(), active.sessionID == sessionID else { return }
         try? FileManager.default.removeItem(at: activeCaptureURL)

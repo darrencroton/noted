@@ -33,10 +33,10 @@ Completed:
 
 Remaining before Phase 5 hardening:
 
-- Phase 4 integration support polish: N-21 through N-24.
+- Phase 4 integration support polish N-21 through N-24 is complete.
 - Phase 5 should still wait for real operational data from the completed Phase 2-4 flows.
 
-Local verification on 2026-04-25: `swift test` passes with 20 contract tests and a clean debug build.
+Local verification on 2026-04-25: `swift test` passes with 26 contract tests and a clean debug build.
 
 ## Cross-Repo Dependency Map
 
@@ -67,7 +67,7 @@ Goal: A real in-person meeting can be recorded from the CLI with a valid manifes
 - Only one active capture is permitted; starting a second capture exits `5`.
 - All emitted timestamps are ISO-8601 with explicit offsets.
 - A CLI-only smoke test can record a short local session using the fixture manifest shape without any `briefing` process running.
-- The inherited menubar Start action must not create legacy/noncanonical session output in Phase 2. It is hidden, disabled, or routed to a clear "not available until ad hoc manifests ship" path until N-23 implements canonical ad hoc manifests.
+- The menubar Start action must not create legacy/noncanonical session output. After N-23, it routes through a canonical ad hoc manifest and the existing `noted start --manifest` path.
 
 ### Tickets
 
@@ -143,10 +143,10 @@ Goal: `noted` completes its side of the integration by handing finished sessions
 
 | Ticket | Status | Title | Estimate | Dependencies | Acceptance notes |
 | --- | --- | --- | ---: | --- | --- |
-| N-21 | | Add configurable `briefing` command invocation | 2 days | Phase 2 | Supports path/command override in settings; logs command, exit code, stdout/stderr location |
-| N-22 | | Invoke `briefing session-ingest` after completion | 2 days | N-10, N-21 | Completion is present before invocation; failures are recoverable by manual command |
-| N-23 | | Implement ad hoc full-manifest writer | 4 days | N-03, N-04 | Menubar Start creates a canonical manifest with allowed nulls and defaults from `noted` settings |
-| N-24 | | Integration fixture with `briefing` | 3 days | N-22 plus `briefing session-ingest` | End-to-end local test uses a completed session directory and verifies ingest is called once |
+| N-21 | Completed | Add configurable `briefing` command invocation | 2 days | Phase 2 | Supports path/command override in settings; logs command, exit code, stdout/stderr location |
+| N-22 | Completed | Invoke `briefing session-ingest` after completion | 2 days | N-10, N-21 | Completion is present before invocation; failures are recoverable by manual command |
+| N-23 | Completed | Implement ad hoc full-manifest writer | 4 days | N-03, N-04 | Menubar Start creates a canonical manifest with allowed nulls and defaults from `noted` settings |
+| N-24 | Completed | Integration fixture with `briefing` | 3 days | N-22 plus `briefing session-ingest` | End-to-end local test uses a completed session directory and verifies ingest is called once |
 | N-25 | Completed | Switch-next race handling with `briefing watch` invalidation | 2 days | N-17 | Both user-driven (`noted switch-next`) and auto-switch paths validate next manifest before launch; write `runtime/next-manifest-missing.json` + exit `8` / skip spawn on missing/invalid; `next_manifest_missing` appears in `completion.json` warnings |
 
 Phase 4 support focused estimate: 13 days.
@@ -183,7 +183,7 @@ See `docs/step-7-report.md` in the root repo for full findings.
 
 ## Phase 3 + N-25 — Completed 2026-04-24
 
-Phase 3 (N-14 through N-20) and N-25 are complete. All 20 contract tests pass. Build is clean.
+Phase 3 (N-14 through N-20), N-25, and Phase 4 integration polish are complete. All 26 contract tests pass. Build is clean.
 
 **What shipped:**
 
@@ -196,14 +196,13 @@ Phase 3 (N-14 through N-20) and N-25 are complete. All 20 contract tests pass. B
 - **N-20** — 15 Phase 3 contract tests covering JSON formats, timing math, grace-period rules, and exit-code semantics. Live back-to-back smoke test (2 s handoff) requires real audio capture; run manually.
 - **N-25** — Both `noted switch-next` and the session runner's auto-switch path validate the next manifest before launch. Missing/invalid manifest → `runtime/next-manifest-missing.json` written → `next_manifest_missing` warning in `completion.json` → exit `8` (CLI) or skip spawn (session runner).
 
-**Post-review fixes (2026-04-25):** Four P2 and three P3 defects corrected after code review. Key changes: (1) `switch-next` N-25 validation moved before ACK write so `next_manifest_missing` warning is guaranteed in `completion.json` regardless of process scheduling; (2) `switch-next` exit code corrected to always stay in the documented `0/2/3/4/8` range; (3) stop reason no longer overwritten when session is already stopping; (4) unread stderr `Pipe` in auto-switch spawn replaced with `FileHandle.standardError`; (5) undocumented 1-second sleep removed from `waitForCaptureFinalizedAcknowledgement` (not in master plan; now redundant given fix 1); (6) `UIState` CodingKeys test hardened to cover all four fields; (7) ISO8601DateFormatter instances cached to avoid per-call allocation in the 100 ms recording loop. 20 contract tests pass, build clean.
+**Post-review fixes (2026-04-25):** Four P2 and three P3 defects corrected after code review. Key changes: (1) `switch-next` N-25 validation moved before ACK write so `next_manifest_missing` warning is guaranteed in `completion.json` regardless of process scheduling; (2) `switch-next` exit code corrected to always stay in the documented `0/2/3/4/8` range; (3) stop reason no longer overwritten when session is already stopping; (4) unread stderr `Pipe` in auto-switch spawn replaced with `FileHandle.standardError`; (5) undocumented 1-second sleep removed from `waitForCaptureFinalizedAcknowledgement` (not in master plan; now redundant given fix 1); (6) `UIState` CodingKeys test hardened to cover all four fields; (7) ISO8601DateFormatter instances cached to avoid per-call allocation in the 100 ms recording loop. 26 contract tests pass, build clean.
 
-## Tickets That Can Start Next (Phase 4)
+## Phase 4 Integration Polish — Completed 2026-04-25
 
-- N-21 Add configurable `briefing` command invocation.
-- N-22 Invoke `briefing session-ingest` after completion.
-- N-23 Implement ad hoc full-manifest writer (menubar Start).
-- N-24 Add integration fixture with `briefing`.
+- **N-21/N-22** — `RuntimeSettings` now carries `briefing_command` and `ingest_after_completion`; terminal completion writers invoke `briefing session-ingest --session-dir <session_dir>` after `completion.json` is atomically written. Handoff stdout/stderr are captured under session `logs/`; `logs/noted.log` records command, exit code, session id, terminal status, and stream paths.
+- **N-23** — The menubar Start action writes a full canonical ad hoc manifest with permitted nulls (`meeting.event_id`, `meeting.scheduled_end_time`) and starts the existing `noted start --manifest` path. Ad hoc defaults come from `noted` runtime settings.
+- **N-24** — Cross-repo smoke coverage is formalised in `briefing/scripts/meeting-intelligence-smoke.sh` and `briefing/docs/session-ingest-smoke.md`.
 
 ## Highest-Risk Assumptions
 
