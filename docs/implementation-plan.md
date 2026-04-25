@@ -36,7 +36,7 @@ Phase 5 gate:
 - No Phase 2-4 tickets remain open. Phase 4 integration support polish N-21 through N-24 is complete.
 - Phase 5 hardening should be prioritised from real operational data from the completed Phase 2-4 flows.
 
-Local verification on 2026-04-25: `swift test` passes with 26 contract tests and a clean debug build.
+Local verification on 2026-04-25: `swift test` passes with 26 Phase 2-4 contract tests and a clean debug build. Phase 5A adds Phase5ContractTests (5 tests); run `swift test` from HushScribe/ to verify.
 
 ## Cross-Repo Dependency Map
 
@@ -158,18 +158,28 @@ Phase 4 support focused estimate: 13 days.
 
 ## Phase 5 - Hardening
 
-Do not break this into detailed tickets yet. Use real Phase 2-4 failures to shape it.
+### Phase 5A — Pre-Soak Hardening — Completed 2026-04-25
 
-Broad work areas:
+**5A-02 — `noted wait --session-id <id> [--timeout-seconds N]`**
+
+`noted wait` blocks until the named session reaches a terminal state (i.e. `outputs/completion.json` is written and contains `terminal_status`), then exits 0. If the session ID is not found in the registry, exits 2. If the timeout elapses before a terminal state is reached, exits 7. Default timeout is 3600 s.
+
+Implementation polls every 500 ms and performs one final check after the deadline to avoid missing a completion file that appeared during the last sleep window.
+
+Code: `NotedCLI.swift` (`wait` private method). Contract tests: `HushScribe/Tests/NotedContractTests/Phase5ContractTests.swift` (exit-code contract and JSON response shapes).
+
+Exit codes per §9.4.1: 0 = terminal state reached, 2 = unknown session, 7 = timeout.
+
+**Remaining Phase 5 broad work areas (post-soak)**
 
 - Crash recovery for sessions that have raw audio but no terminal completion.
 - Operator diagnostics for permissions, model availability, device selection, and post-processing failures.
 - Retention support aligned with the 30-day raw-audio plus FLAC policy.
 - Diarization quality review against real meetings and the decision trigger in the master plan.
 - Online and hybrid mode using CoreAudio Tap with ScreenCaptureKit fallback.
-- Optional `wait`, `list-sessions`, `tail-log`, and `resume` CLI commands if they prove useful during integration.
+- Registry pruning: session registry entries are never deleted today; Phase 5 should add a pruning strategy before entries accumulate over months.
 
-Phase 5 should not begin until the first real Phase 4 vertical slice has produced enough operational data to rank risks.
+Phase 5 full hardening should not begin until real Phase 4 operational data is available to rank risks.
 
 ## Step 7 Vertical Slice — Completed 2026-04-24
 

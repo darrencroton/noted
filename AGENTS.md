@@ -46,10 +46,27 @@ HushScribe/Sources/HushScribe/
 
 Archived HushScribe source and website files live locally under ignored `archive/hushscribe-strip/`.
 
+## Current Status
+
+Phases 2, 3, 4, and 5A are complete. The full CLI surface is:
+
+```
+noted start            --manifest <path>
+noted stop             --session-id <id>
+noted extend           --session-id <id> --minutes N
+noted switch-next      --session-id <id>
+noted status           --session-id <id>
+noted validate-manifest --manifest <path>
+noted version
+noted wait             --session-id <id> [--timeout-seconds N]   # Phase 5A-02
+```
+
+Phase 5 full hardening starts after the first operational soak. See `docs/implementation-plan.md` for the full ticket history.
+
 ## Architecture Notes
 
 - **Menubar app.** `LSUIElement = true`; launching creates only a menubar icon. CLI invocations bypass the menubar and run headlessly.
-- **Phase 2 CLI runtime.** `noted start --manifest`, `stop`, `status`, `validate-manifest`, and `version` are all implemented. The menubar Start action writes a canonical ad hoc manifest and routes through `noted start --manifest`.
+- **Full CLI runtime.** All Phase 2-4 commands plus `noted wait` (Phase 5A-02) are implemented. The menubar Start action writes a canonical ad hoc manifest and routes through `noted start --manifest`.
 - **Dual audio streams.** `TranscriptionEngine` owns `MicCapture` and `SystemAudioCapture`. Each stream feeds a `StreamingTranscriber`.
 - **ASR pipeline.** `StreamingTranscriber` runs FluidAudio VAD and then the selected `ASRBackend`.
 - **Post-session diarization.** `OfflineDiarizerManager` runs after stop against the captured audio and writes `diarization/diarization.json` when successful.

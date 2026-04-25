@@ -25,6 +25,8 @@ struct NotedCLI {
             return extend(options: options)
         case "switch-next":
             return await switchNext(options: options)
+        case "wait":
+            return await wait(options: options)
         case "__run-session":
             return await runSession(options: options)
         default:
@@ -436,6 +438,62 @@ struct NotedCLI {
             "output_dir": record.sessionDir,
         ])
         return 0
+    }
+
+    private func wait(options: [String: String]) async -> Int {
+        guard let sessionID = options["session-id"] else {
+            writeError("missing --session-id <id>")
+            writeJSON(["ok": false, "error": "missing_session_id"])
+            return 2
+        }
+        let timeoutSeconds = Int(options["timeout-seconds"] ?? "3600") ?? 3600
+
+        guard let record = RuntimeFiles.readRegistry(sessionID: sessionID) else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "unknown_session_id"])
+            return 2
+        }
+
+        let sessionDir = URL(fileURLWithPath: record.sessionDir, isDirectory: true)
+        let completionURL = sessionDir.appendingPathComponent("outputs/completion.json")
+        let deadline = Date().addingTimeInterval(Double(timeoutSeconds))
+
+        // Poll every 500 ms. Check immediately on entry — session may already be done.
+        repeat {
+            if FileManager.default.fileExists(atPath: completionURL.path),
+               let data = try? Data(contentsOf: completionURL),
+               let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let terminalStatus = payload["terminal_status"] as? String
+            {
+                writeJSON([
+                    "ok": true,
+                    "session_id": sessionID,
+                    "terminal_status": terminalStatus,
+                    "session_dir": record.sessionDir,
+                ])
+                return 0
+            }
+            if Date() < deadline {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        } while Date() < deadline
+
+        // One final check: completion may have appeared during the last sleep window.
+        if FileManager.default.fileExists(atPath: completionURL.path),
+           let data = try? Data(contentsOf: completionURL),
+           let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+           let terminalStatus = payload["terminal_status"] as? String
+        {
+            writeJSON([
+                "ok": true,
+                "session_id": sessionID,
+                "terminal_status": terminalStatus,
+                "session_dir": record.sessionDir,
+            ])
+            return 0
+        }
+
+        writeJSON(["ok": false, "session_id": sessionID, "error": "timeout"])
+        return 7
     }
 
     @MainActor
