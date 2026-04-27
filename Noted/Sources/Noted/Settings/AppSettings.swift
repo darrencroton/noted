@@ -26,13 +26,6 @@ final class AppSettings {
         didSet { saveRuntimeSettings() }
     }
 
-    var hideFromScreenShare: Bool {
-        didSet {
-            saveRuntimeSettings()
-            applyScreenShareVisibility()
-        }
-    }
-
     init() {
         let runtimeSettings = RuntimeSettings.load()
         transcriptionLocale = runtimeSettings.language
@@ -40,7 +33,6 @@ final class AppSettings {
         outputDirectoryPath = runtimeSettings.outputRoot
         transcriptionModel = runtimeSettings.transcriptionModel
         sysVadThreshold = runtimeSettings.sysVadThreshold
-        hideFromScreenShare = runtimeSettings.hideFromScreenShare
     }
 
     func reset() {
@@ -49,13 +41,20 @@ final class AppSettings {
         outputDirectoryPath = RuntimeSettings.defaultOutputRoot
         transcriptionModel = .parakeet
         sysVadThreshold = 0.92
-        hideFromScreenShare = true
     }
 
     func applyScreenShareVisibility() {
-        let type: NSWindow.SharingType = hideFromScreenShare ? .none : .readOnly
         for window in NSApp.windows {
-            window.sharingType = type
+            window.sharingType = .none
+        }
+    }
+
+    func openOutputDirectory() {
+        do {
+            try FileManager.default.createDirectory(at: outputDirectoryURL, withIntermediateDirectories: true)
+            NSWorkspace.shared.open(outputDirectoryURL)
+        } catch {
+            NSSound.beep()
         }
     }
 
@@ -73,7 +72,7 @@ final class AppSettings {
         settings.defaultInputDevice = inputDeviceID
         settings.outputRoot = outputDirectoryPath
         settings.sysVadThreshold = sysVadThreshold
-        settings.hideFromScreenShare = hideFromScreenShare
+        settings.hideFromScreenShare = true
         switch transcriptionModel {
         case .parakeet:
             settings.asrBackend = "fluidaudio-parakeet"

@@ -6,7 +6,6 @@ import SwiftUI
 final class StatusBarController: NSObject, NSMenuDelegate {
     private var statusItem: NSStatusItem?
     private var settingsWindow: NSWindow?
-    private var statusWindow: NSWindow?
 
     private var settings: AppSettings?
     private var recordingState: RecordingState?
@@ -71,9 +70,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             stop.isEnabled = true
             menu.addItem(stop)
         }
-
-        menu.addItem(makeItem("Status", action: #selector(showStatus(_:))))
-        menu.addItem(.separator())
 
         let settingsItem = makeItem("Settings...", action: #selector(showSettings(_:)))
         settingsItem.keyEquivalent = ","
@@ -290,15 +286,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         alert.runModal()
     }
 
-    @objc private func showStatus(_ sender: NSMenuItem) {
-        let view = StatusPanelView(snapshot: currentStatusSnapshot())
-        statusWindow = showWindow(statusWindow, title: "noted Status", rootView: view, size: NSSize(width: 360, height: 180))
-    }
-
     @objc private func showSettings(_ sender: NSMenuItem) {
         guard let settings else { return }
         let view = SettingsView(settings: settings)
-        settingsWindow = showWindow(settingsWindow, title: "noted Settings", rootView: view, size: NSSize(width: 480, height: 300))
+        settingsWindow = showWindow(settingsWindow, title: "noted Settings", rootView: view, size: NSSize(width: 540, height: 190))
     }
 
     private func showWindow<V: View>(_ existing: NSWindow?, title: String, rootView: V, size: NSSize) -> NSWindow {
@@ -343,55 +334,9 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             }
         }
     }
-
-    private func currentStatusSnapshot() -> StatusSnapshot {
-        if let runtime = currentRuntimeSessionStatus() {
-            return StatusSnapshot(
-                status: runtime.status.status,
-                phase: runtime.status.phase,
-                sessionID: runtime.status.sessionID,
-                outputPath: runtime.sessionDir.path,
-                lastError: runtime.status.lastError
-            )
-        }
-
-        return StatusSnapshot(
-            status: recordingState?.phase.menuTitle.lowercased() ?? "idle",
-            phase: recordingState?.phase.menuTitle ?? "Idle",
-            sessionID: recordingState?.currentSessionID ?? "-",
-            outputPath: recordingState?.currentSessionDirectory?.path ?? "-",
-            lastError: recordingState?.lastError
-        )
-    }
-}
-
-private struct StatusPanelView: View {
-    let snapshot: StatusSnapshot
-
-    var body: some View {
-        Form {
-            LabeledContent("Status", value: snapshot.status)
-            LabeledContent("Phase", value: snapshot.phase)
-            LabeledContent("Session", value: snapshot.sessionID)
-            LabeledContent("Output", value: snapshot.outputPath)
-            if let error = snapshot.lastError {
-                LabeledContent("Last Error", value: error)
-            }
-        }
-        .padding(20)
-        .frame(minWidth: 340, minHeight: 160)
-    }
 }
 
 private struct RuntimeSessionStatus {
     let status: RuntimeStatus
     let sessionDir: URL
-}
-
-private struct StatusSnapshot {
-    let status: String
-    let phase: String
-    let sessionID: String
-    let outputPath: String
-    let lastError: String?
 }

@@ -24,7 +24,9 @@ struct RuntimeSettings: Sendable {
     }
 
     static var defaultOutputRoot: String {
-        repositoryRootURL().appendingPathComponent("sessions", isDirectory: true).path
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Documents/noted", isDirectory: true)
+            .path
     }
 
     static func load() -> RuntimeSettings {
@@ -61,7 +63,7 @@ struct RuntimeSettings: Sendable {
             outputRoot: values["output_root"] ?? defaults.outputRoot,
             adHocNoteDirectory: values["ad_hoc_note_directory"] ?? defaults.adHocNoteDirectory,
             sysVadThreshold: Double(values["sys_vad_threshold"] ?? "") ?? defaults.sysVadThreshold,
-            hideFromScreenShare: Bool(values["hide_from_screen_share"] ?? "") ?? defaults.hideFromScreenShare,
+            hideFromScreenShare: true,
             briefingCommand: values["briefing_command"] ?? defaults.briefingCommand,
             ingestAfterCompletion: Bool(values["ingest_after_completion"] ?? "") ?? defaults.ingestAfterCompletion,
             diarizationEnabled: Bool(values["diarization_enabled"] ?? "") ?? defaults.diarizationEnabled,
@@ -137,42 +139,4 @@ struct RuntimeSettings: Sendable {
             .replacingOccurrences(of: #"""#, with: #"\""#)
     }
 
-    private static func repositoryRootURL() -> URL {
-        let fileManager = FileManager.default
-        let candidates = [
-            Bundle.main.bundleURL,
-            URL(fileURLWithPath: fileManager.currentDirectoryPath, isDirectory: true),
-        ]
-
-        for candidate in candidates {
-            if let root = findRepositoryRoot(startingAt: candidate) {
-                return root
-            }
-        }
-
-        return fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents/noted", isDirectory: true)
-    }
-
-    private static func findRepositoryRoot(startingAt url: URL) -> URL? {
-        let fileManager = FileManager.default
-        var directory = url.hasDirectoryPath ? url : url.deletingLastPathComponent()
-
-        while true {
-            let repoPackage = directory.appendingPathComponent("Noted/Package.swift").path
-            if fileManager.fileExists(atPath: repoPackage) {
-                return directory
-            }
-
-            let package = directory.appendingPathComponent("Package.swift").path
-            if directory.lastPathComponent == "Noted",
-               fileManager.fileExists(atPath: package) {
-                return directory.deletingLastPathComponent()
-            }
-
-            let parent = directory.deletingLastPathComponent()
-            if parent.path == directory.path { return nil }
-            directory = parent
-        }
-    }
 }
