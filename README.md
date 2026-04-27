@@ -27,11 +27,13 @@ Build the app bundle used for normal local operation:
 ./scripts/release.sh test
 ```
 
-The bundle is written to `dist/Noted.app`. Launch it once so macOS can prompt for permissions:
+The bundle is written to `dist/Noted.app`. Launch it once so the menubar app and popup watcher are running:
 
 ```bash
 open dist/Noted.app
 ```
+
+Microphone permission is requested when a recording starts. Screen Recording permission is needed only for online or hybrid sessions that capture system audio.
 
 For integration with `briefing`, put the app executable on `PATH` as `noted`:
 
