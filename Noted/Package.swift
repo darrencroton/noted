@@ -21,7 +21,7 @@ let package = Package(
         ),
         .testTarget(
             name: "NotedContractTests",
-            dependencies: [],
+            dependencies: ["Noted"],
             path: "Tests/NotedContractTests"
         ),
     ]

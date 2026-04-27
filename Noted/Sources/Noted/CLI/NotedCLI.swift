@@ -117,7 +117,7 @@ struct NotedCLI {
                 manifestPath: sessionDir.appendingPathComponent("manifest.json").path
             ))
 
-            let startupResult = await waitForStartup(sessionID: manifest.sessionID, sessionDir: sessionDir)
+            let startupResult = await waitForStartup(sessionID: manifest.sessionID, sessionDir: sessionDir, child: child)
             switch startupResult {
             case .recording:
                 writeJSON([
@@ -132,7 +132,7 @@ struct NotedCLI {
                 return startupFailure(sessionID: manifest.sessionID, sessionDir: sessionDir, code: 3)
             case .audio:
                 return startupFailure(sessionID: manifest.sessionID, sessionDir: sessionDir, code: 4)
-            case .internal:
+            case .internalFailure(let message):
                 if child.isRunning {
                     child.terminate()
                 }
@@ -140,7 +140,7 @@ struct NotedCLI {
                     try? await writeStartupFailure(
                         manifest: manifest,
                         sessionDir: sessionDir,
-                        message: "startup_timeout"
+                        message: message
                     )
                 }
                 return startupFailure(sessionID: manifest.sessionID, sessionDir: sessionDir, code: 6)
@@ -926,10 +926,17 @@ struct NotedCLI {
     }
 
     private func prepareSessionDirectory(manifest: SessionManifest, sourceManifestURL: URL, sessionDir: URL) throws {
-        try rejectExistingSessionArtifacts(at: sessionDir)
-        try SessionStore.createCanonicalDirectories(at: sessionDir)
         let targetManifestURL = sessionDir.appendingPathComponent("manifest.json")
-        try FileManager.default.copyItem(at: sourceManifestURL, to: targetManifestURL)
+        try rejectExistingSessionArtifacts(
+            at: sessionDir,
+            allowingExistingManifestAt: sourceManifestURL.standardizedFileURL == targetManifestURL.standardizedFileURL
+                ? targetManifestURL
+                : nil
+        )
+        try SessionStore.createCanonicalDirectories(at: sessionDir)
+        if sourceManifestURL.standardizedFileURL != targetManifestURL.standardizedFileURL {
+            try FileManager.default.copyItem(at: sourceManifestURL, to: targetManifestURL)
+        }
         let logURL = sessionDir.appendingPathComponent("logs/noted.log")
         if !FileManager.default.fileExists(atPath: logURL.path) {
             FileManager.default.createFile(atPath: logURL.path, contents: nil)
@@ -937,10 +944,9 @@ struct NotedCLI {
         appendLog(sessionDir: sessionDir, "session prepared for \(manifest.sessionID)")
     }
 
-    private func rejectExistingSessionArtifacts(at sessionDir: URL) throws {
+    private func rejectExistingSessionArtifacts(at sessionDir: URL, allowingExistingManifestAt allowedManifestURL: URL? = nil) throws {
         guard FileManager.default.fileExists(atPath: sessionDir.path) else { return }
         let artifactPaths = [
-            "manifest.json",
             "runtime/status.json",
             "runtime/stop-request.json",
             "runtime/capture-finalized.json",
@@ -951,6 +957,12 @@ struct NotedCLI {
             if FileManager.default.fileExists(atPath: sessionDir.appendingPathComponent(relativePath).path) {
                 throw CLIError("session_dir_already_contains_artifacts: \(sessionDir.path)")
             }
+        }
+
+        let manifestURL = sessionDir.appendingPathComponent("manifest.json")
+        if FileManager.default.fileExists(atPath: manifestURL.path),
+           allowedManifestURL?.standardizedFileURL != manifestURL.standardizedFileURL {
+            throw CLIError("session_dir_already_contains_artifacts: \(sessionDir.path)")
         }
 
         for directoryName in ["audio", "transcript", "diarization", "logs"] {
@@ -1042,10 +1054,10 @@ struct NotedCLI {
         case recording
         case permission
         case audio
-        case `internal`
+        case internalFailure(String)
     }
 
-    private func waitForStartup(sessionID: String, sessionDir: URL) async -> StartupResult {
+    private func waitForStartup(sessionID: String, sessionDir: URL, child: Process) async -> StartupResult {
         // Phase 1: child must write any status.json within 30 s (proves it launched).
         let launchDeadline = Date().addingTimeInterval(30)
         var childAlive = false
@@ -1055,9 +1067,12 @@ struct NotedCLI {
                 childAlive = true
                 break
             }
+            if !child.isRunning {
+                return .internalFailure("session_runner_exited_before_startup")
+            }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
-        guard childAlive else { return .internal }
+        guard childAlive else { return .internalFailure("session_runner_did_not_start") }
 
         // The child is alive; allow model loading and audio startup to finish.
         let modelDeadline = Date().addingTimeInterval(90)
@@ -1065,9 +1080,12 @@ struct NotedCLI {
             if let status = RuntimeFiles.readStatus(sessionDir: sessionDir) {
                 if let result = checkTerminalStartup(status: status) { return result }
             }
+            if !child.isRunning {
+                return .internalFailure("session_runner_exited_before_startup")
+            }
             try? await Task.sleep(nanoseconds: 100_000_000)
         }
-        return .internal
+        return .internalFailure("startup_timeout")
     }
 
     private func checkTerminalStartup(status: RuntimeStatus) -> StartupResult? {
@@ -1082,7 +1100,7 @@ struct NotedCLI {
             if error.contains("audio") || error.contains("device") || error.contains("mic") {
                 return .audio
             }
-            return .internal
+            return .internalFailure(status.lastError ?? "startup_failed")
         }
         return nil
     }

@@ -34,6 +34,23 @@ struct SessionManifest: Codable, Sendable {
             case scheduledEndTime = "scheduled_end_time"
             case timezone
         }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            if let eventID {
+                try container.encode(eventID, forKey: .eventID)
+            } else {
+                try container.encodeNil(forKey: .eventID)
+            }
+            try container.encode(title, forKey: .title)
+            try container.encode(startTime, forKey: .startTime)
+            if let scheduledEndTime {
+                try container.encode(scheduledEndTime, forKey: .scheduledEndTime)
+            } else {
+                try container.encodeNil(forKey: .scheduledEndTime)
+            }
+            try container.encode(timezone, forKey: .timezone)
+        }
     }
 
     struct Mode: Codable, Sendable {
@@ -117,6 +134,15 @@ struct SessionManifest: Codable, Sendable {
 
         enum CodingKeys: String, CodingKey {
             case completionCallback = "completion_callback"
+        }
+
+        func encode(to encoder: Encoder) throws {
+            var container = encoder.container(keyedBy: CodingKeys.self)
+            if let completionCallback {
+                try container.encode(completionCallback, forKey: .completionCallback)
+            } else {
+                try container.encodeNil(forKey: .completionCallback)
+            }
         }
     }
 

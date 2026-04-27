@@ -1,12 +1,13 @@
 import Foundation
+@testable import Noted
 import XCTest
 
 /// Completion handoff contract tests:
 /// ad hoc manifests, configurable briefing command, and completion handoff.
 ///
 /// These tests validate the file-based contracts and JSON formats current handoff.
-/// They do not invoke the main module; production types are verified by inspecting fixtures
-/// and constructing representative values directly.
+/// Production ad hoc manifest encoding is covered directly so contract-required nulls
+/// cannot regress behind the menubar action.
 final class HandoffContractTests: XCTestCase {
 
     // MARK: - Ad hoc manifest contract
@@ -48,6 +49,38 @@ final class HandoffContractTests: XCTestCase {
         let outputDir = try XCTUnwrap(paths["output_dir"] as? String)
         XCTAssertEqual(outputDir, sessionDir + "/outputs",
                        "output_dir must equal session_dir/outputs")
+    }
+
+    func testAdHocManifestWriterEmitsExplicitNullContractFields() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("noted-ad-hoc-manifest-writer-\(UUID().uuidString)", isDirectory: true)
+        let settings = RuntimeSettings(
+            hostName: "Test Host",
+            language: "en-US",
+            asrBackend: "fluidaudio-parakeet",
+            asrModelVariant: "parakeet-v3",
+            defaultInputDevice: 0,
+            outputRoot: root.appendingPathComponent("sessions", isDirectory: true).path,
+            adHocNoteDirectory: root.appendingPathComponent("notes", isDirectory: true).path,
+            sysVadThreshold: 0.92,
+            hideFromScreenShare: true,
+            briefingCommand: "",
+            ingestAfterCompletion: false,
+            diarizationEnabled: true,
+            defaultExtensionMinutes: 5,
+            preEndPromptMinutes: 5,
+            noInteractionGraceMinutes: 5
+        )
+
+        let written = try AdHocManifestWriter(settings: settings).writeManifest()
+        let data = try Data(contentsOf: written.manifestURL)
+        let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let meeting = try XCTUnwrap(manifest["meeting"] as? [String: Any])
+        let hooks = try XCTUnwrap(manifest["hooks"] as? [String: Any])
+
+        XCTAssertTrue(isJSONNull(meeting["event_id"]))
+        XCTAssertTrue(isJSONNull(meeting["scheduled_end_time"]))
+        XCTAssertTrue(isJSONNull(hooks["completion_callback"]))
     }
 
     // MARK: - Completion handoff contract
