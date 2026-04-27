@@ -43,7 +43,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     private func buildMenuItems(into menu: NSMenu) {
         guard let recordingState else { return }
-        let bridgedStatus = currentRuntimeStatus()
+        let bridgedStatus = currentRuntimeSessionStatus()?.status
 
         let title = NSMenuItem(title: "noted", action: nil, keyEquivalent: "")
         title.isEnabled = false
@@ -94,7 +94,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func updateIcon() {
         guard let button = statusItem?.button else { return }
         let symbol: String
-        switch currentRuntimeStatus()?.status {
+        switch currentRuntimeSessionStatus()?.status.status {
         case "recording":
             symbol = "record.circle.fill"
         case "processing":
@@ -119,9 +119,18 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         button.image?.isTemplate = symbol != "record.circle.fill"
     }
 
-    private func currentRuntimeStatus() -> RuntimeStatus? {
+    private func currentRuntimeSessionStatus() -> RuntimeSessionStatus? {
         if let active = RuntimeFiles.readLiveActiveCapture() {
-            return RuntimeFiles.readStatus(sessionDir: URL(fileURLWithPath: active.sessionDir, isDirectory: true))
+            let sessionDir = URL(fileURLWithPath: active.sessionDir, isDirectory: true)
+            if let status = RuntimeFiles.readStatus(sessionDir: sessionDir) {
+                return RuntimeSessionStatus(status: status, sessionDir: sessionDir)
+            }
+        }
+        if let latest = RuntimeFiles.latestRegistryRecord() {
+            let sessionDir = URL(fileURLWithPath: latest.sessionDir, isDirectory: true)
+            if let status = RuntimeFiles.readStatus(sessionDir: sessionDir) {
+                return RuntimeSessionStatus(status: status, sessionDir: sessionDir)
+            }
         }
         return nil
     }
@@ -282,8 +291,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func showStatus(_ sender: NSMenuItem) {
-        guard let recordingState else { return }
-        let view = StatusPanelView(recordingState: recordingState)
+        let view = StatusPanelView(snapshot: currentStatusSnapshot())
         statusWindow = showWindow(statusWindow, title: "noted Status", rootView: view, size: NSSize(width: 360, height: 180))
     }
 
@@ -295,6 +303,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     private func showWindow<V: View>(_ existing: NSWindow?, title: String, rootView: V, size: NSSize) -> NSWindow {
         if let existing {
+            existing.contentViewController = NSHostingController(rootView: rootView)
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return existing
@@ -307,6 +316,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             defer: false
         )
         window.title = title
+        window.isReleasedWhenClosed = false
         window.contentViewController = NSHostingController(rootView: rootView)
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -333,21 +343,55 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             }
         }
     }
+
+    private func currentStatusSnapshot() -> StatusSnapshot {
+        if let runtime = currentRuntimeSessionStatus() {
+            return StatusSnapshot(
+                status: runtime.status.status,
+                phase: runtime.status.phase,
+                sessionID: runtime.status.sessionID,
+                outputPath: runtime.sessionDir.path,
+                lastError: runtime.status.lastError
+            )
+        }
+
+        return StatusSnapshot(
+            status: recordingState?.phase.menuTitle.lowercased() ?? "idle",
+            phase: recordingState?.phase.menuTitle ?? "Idle",
+            sessionID: recordingState?.currentSessionID ?? "-",
+            outputPath: recordingState?.currentSessionDirectory?.path ?? "-",
+            lastError: recordingState?.lastError
+        )
+    }
 }
 
 private struct StatusPanelView: View {
-    @Bindable var recordingState: RecordingState
+    let snapshot: StatusSnapshot
 
     var body: some View {
         Form {
-            LabeledContent("Phase", value: recordingState.phase.menuTitle)
-            LabeledContent("Session", value: recordingState.currentSessionID ?? "-")
-            LabeledContent("Output", value: recordingState.currentSessionDirectory?.path ?? "-")
-            if let error = recordingState.lastError {
+            LabeledContent("Status", value: snapshot.status)
+            LabeledContent("Phase", value: snapshot.phase)
+            LabeledContent("Session", value: snapshot.sessionID)
+            LabeledContent("Output", value: snapshot.outputPath)
+            if let error = snapshot.lastError {
                 LabeledContent("Last Error", value: error)
             }
         }
         .padding(20)
         .frame(minWidth: 340, minHeight: 160)
     }
+}
+
+private struct RuntimeSessionStatus {
+    let status: RuntimeStatus
+    let sessionDir: URL
+}
+
+private struct StatusSnapshot {
+    let status: String
+    let phase: String
+    let sessionID: String
+    let outputPath: String
+    let lastError: String?
 }
