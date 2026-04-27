@@ -24,16 +24,14 @@ enum ModelDownloadState {
     case ready
 }
 
-final class FileOffsetTracker: @unchecked Sendable {
-    private var samples: Int = 0
-    private let lock = NSLock()
+enum TranscriptionEngineError: LocalizedError {
+    case asrBackendUnavailable(String)
 
-    var seconds: Double {
-        lock.withLock { Double(samples) / 16_000.0 }
-    }
-
-    func set(_ samples: Int) {
-        lock.withLock { self.samples = samples }
+    var errorDescription: String? {
+        switch self {
+        case .asrBackendUnavailable(let message):
+            return message
+        }
     }
 }
 
@@ -60,25 +58,17 @@ final class TranscriptionEngine {
     private(set) var selectedModel: TranscriptionModel = .parakeet
 
     private var asrManager: AsrManager?
-    private var micVadManager: VadManager?
-    private var sysVadManager: VadManager?
     private var whisperKitBackend: WhisperKitASRBackend?
     private var sfSpeechBackend: SFSpeechBackend?
 
     private var currentMicDeviceID: AudioDeviceID = 0
     private var userSelectedDeviceID: AudioDeviceID = 0
-    private var captureAppBundleID: String?
     private var currentRawMicrophoneAudioURL: URL?
     private var defaultDeviceListenerBlock: AudioObjectPropertyListenerBlock?
-    private var utteranceHandler: (@Sendable (TranscriptSegment) -> Void)?
 
     init() {
         let cacheDir = AsrModels.defaultCacheDirectory(for: .v3)
         modelDownloadState = AsrModels.modelsExist(at: cacheDir, version: .v3) ? .ready : .needed
-    }
-
-    func setUtteranceHandler(_ handler: @escaping @Sendable (TranscriptSegment) -> Void) {
-        utteranceHandler = handler
     }
 
     func setModel(_ model: TranscriptionModel) {
@@ -146,8 +136,6 @@ final class TranscriptionEngine {
             let cacheDir = AsrModels.defaultCacheDirectory(for: .v3)
             try? FileManager.default.removeItem(at: cacheDir)
             asrManager = nil
-            micVadManager = nil
-            sysVadManager = nil
             modelDownloadState = .needed
         case .whisperBase, .whisperLargeV3:
             guard let modelID = model.whisperModelID else { return }
@@ -171,42 +159,16 @@ final class TranscriptionEngine {
         lastError = nil
         guard await ensureMicrophonePermission() else { return }
 
-        guard let asrBackend = await loadASRBackend(locale: locale, sysVadThreshold: sysVadThreshold),
-              let micVadManager,
-              let sysVadManager
-        else {
-            isRunning = false
-            return
-        }
-
         isRunning = true
-        assetStatus = "Transcribing (\(selectedModel.displayName))"
+        assetStatus = "Recording"
         userSelectedDeviceID = inputDeviceID
-        captureAppBundleID = appBundleID
         currentRawMicrophoneAudioURL = rawMicrophoneAudioURL
 
         let targetMicID = inputDeviceID > 0 ? inputDeviceID : MicCapture.defaultInputDeviceID()
         currentMicDeviceID = targetMicID ?? 0
         let micStream = micCapture.bufferStream(deviceID: targetMicID, rawAudioURL: rawMicrophoneAudioURL)
-        let handler = utteranceHandler
-
-        let micTranscriber = StreamingTranscriber(
-            asrBackend: asrBackend,
-            vadManager: micVadManager,
-            speaker: .microphone,
-            audioSource: .microphone,
-            onSpeechStart: { [weak self] in Task { @MainActor in self?.isSpeechDetected = true } },
-            onPartial: { _ in },
-            onFinal: { [weak self] text in
-                handler?(TranscriptSegment(speaker: .microphone, text: text))
-                Task { @MainActor in self?.isSpeechDetected = false }
-            }
-        )
-        micTask = Task.detached { [weak self] in
-            let failed = await micTranscriber.run(stream: micStream)
-            if failed {
-                Task { @MainActor in self?.lastError = "Microphone transcription failed." }
-            }
+        micTask = Task.detached {
+            for await _ in micStream {}
         }
 
         if captureSystemAudio {
@@ -215,23 +177,8 @@ final class TranscriptionEngine {
                     appBundleID: appBundleID,
                     rawAudioURL: rawSystemAudioURL
                 )
-                let sysTranscriber = StreamingTranscriber(
-                    asrBackend: asrBackend,
-                    vadManager: sysVadManager,
-                    speaker: .system,
-                    audioSource: .system,
-                    onSpeechStart: { [weak self] in Task { @MainActor in self?.isSpeechDetected = true } },
-                    onPartial: { _ in },
-                    onFinal: { [weak self] text in
-                        handler?(TranscriptSegment(speaker: .system, text: text))
-                        Task { @MainActor in self?.isSpeechDetected = false }
-                    }
-                )
-                sysTask = Task.detached { [weak self] in
-                    let failed = await sysTranscriber.run(stream: sysStreams.systemAudio)
-                    if failed {
-                        Task { @MainActor in self?.lastError = "System audio transcription failed." }
-                    }
+                sysTask = Task.detached {
+                    for await _ in sysStreams.systemAudio {}
                 }
             } catch {
                 lastError = "Failed to start system audio capture: \(error.localizedDescription)"
@@ -258,29 +205,29 @@ final class TranscriptionEngine {
         return systemAudioURL
     }
 
-    nonisolated func runPostSessionDiarization(audioURL: URL) async -> [(speakerId: String, startTime: Float, endTime: Float)]? {
+    func diarizeAudio(audioURL: URL, speakerCountHint: Int?) async -> [DiarizationSegment]? {
         guard FileManager.default.fileExists(atPath: audioURL.path) else {
-            diagLog("[DIARIZE] No persisted system audio file found")
+            diagLog("[DIARIZE] No persisted audio file found")
             return nil
         }
 
         do {
-            let diarizer = OfflineDiarizerManager()
-            try await diarizer.prepareModels()
-            let result = try await diarizer.process(audioURL)
-            let segments = result.segments.map { segment in
-                (speakerId: segment.speakerId, startTime: segment.startTimeSeconds, endTime: segment.endTimeSeconds)
-            }
-            return segments
+            return try await HintRetryingDiarizer().diarize(audioURL: audioURL, speakerCountHint: speakerCountHint)
         } catch {
             diagLog("[DIARIZE] Failed: \(error.localizedDescription)")
             return nil
         }
     }
 
-    private func loadASRBackend(locale: Locale, sysVadThreshold: Double) async -> (any ASRBackend)? {
+    func transcribeAudio(_ samples: [Float], source: AudioSource, locale: Locale) async throws -> ASRTranscriptResult {
+        guard let backend = await loadASRBackend(locale: locale) else {
+            throw TranscriptionEngineError.asrBackendUnavailable(lastError ?? "ASR backend unavailable.")
+        }
+        return try await backend.transcribe(samples, source: source)
+    }
+
+    private func loadASRBackend(locale: Locale) async -> (any ASRBackend)? {
         if selectedModel.isWhisperKit {
-            guard await ensureVADLoaded(sysVadThreshold: sysVadThreshold) else { return nil }
             if let whisperKitBackend { return whisperKitBackend }
             guard let modelID = selectedModel.whisperModelID else { return nil }
             assetStatus = "Loading \(selectedModel.displayName)..."
@@ -301,7 +248,6 @@ final class TranscriptionEngine {
                 lastError = "Speech recognition permission denied."
                 return nil
             }
-            guard await ensureVADLoaded(sysVadThreshold: sysVadThreshold) else { return nil }
             if let sfSpeechBackend { return sfSpeechBackend }
             do {
                 let backend = try SFSpeechBackend(locale: locale)
@@ -313,15 +259,13 @@ final class TranscriptionEngine {
             }
         }
 
-        if asrManager == nil || micVadManager == nil || sysVadManager == nil {
+        if asrManager == nil {
             assetStatus = "Loading Parakeet model..."
             do {
                 let models = try await AsrModels.downloadAndLoad(version: .v3)
                 let manager = AsrManager(config: .default)
                 try await manager.loadModels(models)
                 asrManager = manager
-                micVadManager = try await VadManager()
-                sysVadManager = try await VadManager(config: VadConfig(defaultThreshold: Float(sysVadThreshold)))
                 modelDownloadState = .ready
             } catch {
                 lastError = "Failed to load Parakeet model: \(error.localizedDescription)"
@@ -332,20 +276,6 @@ final class TranscriptionEngine {
 
         guard let asrManager else { return nil }
         return FluidAudioASRBackend(manager: asrManager)
-    }
-
-    private func ensureVADLoaded(sysVadThreshold: Double) async -> Bool {
-        if micVadManager != nil, sysVadManager != nil { return true }
-        assetStatus = "Loading VAD model..."
-        do {
-            micVadManager = try await VadManager()
-            sysVadManager = try await VadManager(config: VadConfig(defaultThreshold: Float(sysVadThreshold)))
-            return true
-        } catch {
-            lastError = "Failed to load VAD: \(error.localizedDescription)"
-            assetStatus = "Ready"
-            return false
-        }
     }
 
     private func ensureMicrophonePermission() async -> Bool {
@@ -371,17 +301,7 @@ final class TranscriptionEngine {
     }
 
     private func restartMic(inputDeviceID: AudioDeviceID) {
-        guard isRunning, let micVadManager else { return }
-        let backend: any ASRBackend
-        if selectedModel.isWhisperKit, let whisperKitBackend {
-            backend = whisperKitBackend
-        } else if selectedModel.isAppleSpeech, let sfSpeechBackend {
-            backend = sfSpeechBackend
-        } else if let asrManager {
-            backend = FluidAudioASRBackend(manager: asrManager)
-        } else {
-            return
-        }
+        guard isRunning else { return }
 
         if inputDeviceID != 0 || userSelectedDeviceID != 0 {
             userSelectedDeviceID = inputDeviceID
@@ -397,21 +317,8 @@ final class TranscriptionEngine {
         currentMicDeviceID = resolvedTarget
 
         let stream = micCapture.bufferStream(deviceID: targetMicID, rawAudioURL: currentRawMicrophoneAudioURL)
-        let handler = utteranceHandler
-        let transcriber = StreamingTranscriber(
-            asrBackend: backend,
-            vadManager: micVadManager,
-            speaker: .microphone,
-            audioSource: .microphone,
-            onSpeechStart: { [weak self] in Task { @MainActor in self?.isSpeechDetected = true } },
-            onPartial: { _ in },
-            onFinal: { [weak self] text in
-                handler?(TranscriptSegment(speaker: .microphone, text: text))
-                Task { @MainActor in self?.isSpeechDetected = false }
-            }
-        )
         micTask = Task.detached {
-            _ = await transcriber.run(stream: stream)
+            for await _ in stream {}
         }
     }
 

@@ -515,18 +515,10 @@ struct NotedCLI {
         let settings = RuntimeSettings.load()
         let transcriptionEngine = TranscriptionEngine()
         transcriptionEngine.setModel(transcriptionModel(for: manifest, settings: settings))
-        let transcriptLogger = TranscriptLogger()
-        transcriptionEngine.setUtteranceHandler { segment in
-            Task {
-                await transcriptLogger.append(segment)
-            }
-        }
 
         var startedAtString: String?
         do {
-            try await transcriptLogger.startSession(descriptor)
-            // Write status before model loading so the parent process knows the child is
-            // alive during CoreML compilation (~30 s on first run after a code-signature change).
+            // Write status before capture startup so the parent process knows the child is alive.
             try RuntimeFiles.writeStatus(
                 sessionID: manifest.sessionID,
                 sessionDir: sessionDir,
@@ -535,7 +527,7 @@ struct NotedCLI {
                 startedAt: nil,
                 scheduledEndTime: manifest.meeting.scheduledEndTime
             )
-            appendLog(sessionDir: sessionDir, "loading ASR models")
+            appendLog(sessionDir: sessionDir, "starting audio capture")
             await transcriptionEngine.start(
                 locale: Locale(identifier: manifest.transcription.language ?? settings.language),
                 inputDeviceID: settings.defaultInputDevice,
@@ -659,7 +651,6 @@ struct NotedCLI {
             _ = await transcriptionEngine.stop()
             fsyncIfPossible(descriptor.microphoneAudioURL)
             fsyncIfPossible(descriptor.systemAudioURL)
-            _ = try await transcriptLogger.endSession()
             try RuntimeFiles.writeStatus(
                 sessionID: manifest.sessionID,
                 sessionDir: sessionDir,
@@ -740,8 +731,7 @@ struct NotedCLI {
         var errors: [String] = []
         let audioOK = FileManager.default.fileExists(atPath: descriptor.microphoneAudioURL.path)
             || FileManager.default.fileExists(atPath: descriptor.systemAudioURL.path)
-        let transcriptOK = FileManager.default.fileExists(atPath: descriptor.transcriptDirectory.appendingPathComponent("transcript.txt").path)
-            && FileManager.default.fileExists(atPath: descriptor.transcriptDirectory.appendingPathComponent("transcript.json").path)
+        var transcriptOK = false
 
         // Include a warning when switch-next found the next manifest had been invalidated.
         if FileManager.default.fileExists(atPath: RuntimeFiles.nextManifestMissingURL(sessionDir: descriptor.directory).path) {
@@ -749,7 +739,7 @@ struct NotedCLI {
         }
 
         var diarizationOK = false
-        if manifest.transcription.diarizationEnabled {
+        if audioOK {
             try RuntimeFiles.writeStatus(
                 sessionID: manifest.sessionID,
                 sessionDir: descriptor.directory,
@@ -760,18 +750,19 @@ struct NotedCLI {
                 currentExtensionMinutes: currentExtensionMinutes,
                 preEndPromptShown: preEndPromptShown
             )
-            let diarizationAudio = FileManager.default.fileExists(atPath: descriptor.systemAudioURL.path)
-                ? descriptor.systemAudioURL
-                : descriptor.microphoneAudioURL
-            if let diarization = await transcriptionEngine.runPostSessionDiarization(audioURL: diarizationAudio) {
-                let segments = diarization.map {
-                    DiarizationSegment(speakerId: $0.speakerId, startTime: $0.startTime, endTime: $0.endTime)
-                }
-                try await TranscriptLogger().writeDiarization(segments, to: descriptor.directory)
-                diarizationOK = true
-            } else {
-                warnings.append("diarization_failed")
-            }
+            let processor = PostSessionProcessor(
+                transcriber: transcriptionEngine,
+                diarizer: transcriptionEngine
+            )
+            let result = await processor.process(
+                manifest: manifest,
+                descriptor: descriptor,
+                locale: Locale(identifier: manifest.transcription.language ?? RuntimeSettings.load().language)
+            )
+            transcriptOK = result.transcriptOK
+            diarizationOK = result.diarizationOK
+            warnings.append(contentsOf: result.warnings)
+            errors.append(contentsOf: result.errors)
         }
 
         if !audioOK { errors.append("audio_capture_missing") }

@@ -1,5 +1,4 @@
 import AppKit
-import Observation
 import SwiftUI
 
 @MainActor
@@ -8,21 +7,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var settingsWindow: NSWindow?
 
     private var settings: AppSettings?
-    private var recordingState: RecordingState?
-    private var sessionController: SessionController?
     private var runtimePollTimer: Timer?
     private var adHocStartProcess: Process?
     private var stopProcess: Process?
 
-    func setup(
-        settings: AppSettings,
-        recordingState: RecordingState,
-        sessionController: SessionController
-    ) {
+    func setup(settings: AppSettings) {
         guard statusItem == nil else { return }
         self.settings = settings
-        self.recordingState = recordingState
-        self.sessionController = sessionController
 
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         item.menu = NSMenu()
@@ -30,7 +21,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         statusItem = item
 
         updateIcon()
-        observeIcon()
         startRuntimePolling()
     }
 
@@ -40,14 +30,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     private func buildMenuItems(into menu: NSMenu) {
-        guard let recordingState else { return }
         let bridgedStatus = currentRuntimeSessionStatus()?.status
 
         let title = NSMenuItem(title: "noted", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
 
-        let statusTitle = bridgedStatus?.status ?? (recordingState.isBusy ? recordingState.phase.menuTitle.lowercased() : "idle")
+        let statusTitle = bridgedStatus?.status ?? "idle"
         let state = NSMenuItem(title: "Status: \(statusTitle)", action: nil, keyEquivalent: "")
         state.isEnabled = false
         menu.addItem(state)
@@ -93,10 +82,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         if stopProcess != nil {
             isRecording = false
         } else {
-            let phase = recordingState?.phase ?? .idle
             isRecording = adHocStartProcess?.isRunning == true
                 || RuntimeFiles.readLiveActiveCapture() != nil
-                || phase == .starting || phase == .recording
         }
         if isRecording {
             let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
@@ -123,17 +110,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             }
         }
         return nil
-    }
-
-    private func observeIcon() {
-        withObservationTracking {
-            _ = recordingState?.phase
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.updateIcon()
-                self?.observeIcon()
-            }
-        }
     }
 
     private func startRuntimePolling() {
@@ -191,10 +167,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             NSSound.beep()
             showAdHocStartFailure(message: error.localizedDescription)
         }
-    }
-
-    @objc private func stopRecording(_ sender: NSMenuItem) {
-        Task { await sessionController?.stopSession() }
     }
 
     @objc private func stopActiveCapture(_ sender: NSMenuItem) {
@@ -323,7 +295,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func quitApp(_ sender: NSMenuItem) {
-        guard recordingState?.isRecording == true else {
+        guard let active = RuntimeFiles.readLiveActiveCapture() else {
             NSApplication.shared.terminate(nil)
             return
         }
@@ -334,8 +306,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         alert.addButton(withTitle: "Stop and Quit")
         alert.addButton(withTitle: "Cancel")
         if alert.runModal() == .alertFirstButtonReturn {
-            Task {
-                await sessionController?.stopSession()
+            if let process = try? makeLoggedCLIProcess(
+                arguments: ["stop", "--session-id", active.sessionID],
+                logName: "menu-quit-stop.log"
+            ) {
+                try? process.run()
+                process.waitUntilExit()
+                RuntimeFiles.releaseActiveCapture(sessionID: active.sessionID)
                 NSApplication.shared.terminate(nil)
             }
         }

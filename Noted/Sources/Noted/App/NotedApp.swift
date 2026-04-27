@@ -29,53 +29,24 @@ struct NotedApplication {
 }
 
 @MainActor
-final class AppServices {
-    static let shared = AppServices()
-
-    let settings = AppSettings()
-    let recordingState = RecordingState()
-    let transcriptionEngine = TranscriptionEngine()
-    let transcriptLogger = TranscriptLogger()
-    lazy var sessionController = SessionController(
-        settings: settings,
-        recordingState: recordingState,
-        transcriptionEngine: transcriptionEngine,
-        transcriptLogger: transcriptLogger
-    )
-
-    private init() {
-        transcriptionEngine.setModel(settings.transcriptionModel)
-        transcriptionEngine.setUtteranceHandler { [transcriptLogger] segment in
-            Task {
-                await transcriptLogger.append(segment)
-            }
-        }
-    }
-}
-
-@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let settings = AppSettings()
     private let statusBarController = StatusBarController()
     private let popupController = EndOfMeetingPopupController()
     private var windowObserver: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let services = AppServices.shared
-        services.settings.applyScreenShareVisibility()
-        statusBarController.setup(
-            settings: services.settings,
-            recordingState: services.recordingState,
-            sessionController: services.sessionController
-        )
+        settings.applyScreenShareVisibility()
+        statusBarController.setup(settings: settings)
         popupController.start()
 
         windowObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
             object: nil,
             queue: .main
-        ) { _ in
-            Task { @MainActor in
-                AppServices.shared.settings.applyScreenShareVisibility()
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.settings.applyScreenShareVisibility()
             }
         }
     }

@@ -12,36 +12,33 @@ enum SessionType: String, CaseIterable, Codable, Sendable {
     }
 }
 
-enum Speaker: String, Codable, Sendable {
-    case microphone
-    case system
-
-    var displayName: String {
-        switch self {
-        case .microphone: return "Microphone"
-        case .system: return "System"
-        }
-    }
-}
-
-struct TranscriptSegment: Identifiable, Codable, Sendable {
-    let id: UUID
-    let speaker: Speaker
-    let text: String
-    let timestamp: Date
-
-    init(id: UUID = UUID(), speaker: Speaker, text: String, timestamp: Date = .now) {
-        self.id = id
-        self.speaker = speaker
-        self.text = text
-        self.timestamp = timestamp
-    }
-}
-
 struct DiarizationSegment: Codable, Sendable {
     let speakerId: String
     let startTime: Float
     let endTime: Float
+}
+
+enum TranscriptAudioSource: String, Codable, Sendable {
+    case microphone
+    case system
+}
+
+struct FinalTranscriptSegment: Codable, Sendable {
+    let speakerId: String
+    let source: TranscriptAudioSource
+    let startTime: Float
+    let endTime: Float
+    let text: String
+    let confidence: Float?
+
+    enum CodingKeys: String, CodingKey {
+        case speakerId = "speaker_id"
+        case source
+        case startTime = "start_time"
+        case endTime = "end_time"
+        case text
+        case confidence
+    }
 }
 
 enum TranscriptionModel: String, CaseIterable, Codable, Sendable {
