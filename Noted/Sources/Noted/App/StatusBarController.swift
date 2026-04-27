@@ -166,20 +166,23 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 arguments: ["start", "--manifest", written.manifestURL.path],
                 logName: "ad-hoc-start.log"
             )
-            process.terminationHandler = { [weak self] process in
+            process.terminationHandler = { [weak self] terminatedProcess in
                 DispatchQueue.main.async { [weak self] in
-                    self?.adHocStartProcess = nil
-                    self?.appendMenuLog("start_ad_hoc_completed session_id=\(written.manifest.sessionID) exit_code=\(process.terminationStatus)")
+                    if self?.adHocStartProcess === terminatedProcess {
+                        self?.adHocStartProcess = nil
+                    }
+                    self?.appendMenuLog("start_ad_hoc_completed session_id=\(written.manifest.sessionID) exit_code=\(terminatedProcess.terminationStatus)")
                     self?.updateIcon()
-                    if process.terminationStatus != 0 && process.terminationReason == .exit {
+                    if terminatedProcess.terminationStatus != 0 && terminatedProcess.terminationReason == .exit {
                         self?.showAdHocStartFailure(
-                            status: Int(process.terminationStatus),
+                            status: Int(terminatedProcess.terminationStatus),
                             sessionDir: URL(fileURLWithPath: written.manifest.paths.sessionDir)
                         )
                     }
                 }
             }
             adHocStartProcess = process
+            stopProcess = nil  // a new session takes ownership; prior stop is no longer relevant
             try process.run()
             updateIcon()
         } catch {
@@ -215,10 +218,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 arguments: ["stop", "--session-id", active.sessionID],
                 logName: "menu-stop.log"
             )
-            process.terminationHandler = { [weak self] process in
+            process.terminationHandler = { [weak self] terminatedProcess in
                 DispatchQueue.main.async { [weak self] in
-                    self?.stopProcess = nil
-                    self?.appendMenuLog("stop_recording_completed session_id=\(active.sessionID) exit_code=\(process.terminationStatus)")
+                    if self?.stopProcess === terminatedProcess {
+                        self?.stopProcess = nil
+                    }
+                    self?.appendMenuLog("stop_recording_completed session_id=\(active.sessionID) exit_code=\(terminatedProcess.terminationStatus)")
                     // Defensive cleanup: if the session runner didn't release the capture
                     // before noted-stop returned (e.g. model still loading at stop time),
                     // remove it here so the menu and icon reflect the stopped state.
