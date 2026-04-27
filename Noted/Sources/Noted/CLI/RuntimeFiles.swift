@@ -190,15 +190,16 @@ enum RuntimeFiles {
         do {
             try FileManager.default.createDirectory(at: activeCaptureLockDirectory, withIntermediateDirectories: false)
         } catch {
-            guard let active = readActiveCapture() else {
-                return false
+            if let active = readActiveCapture() {
+                if processIsRunning(active.pid) {
+                    return false
+                }
+                // Stale capture from a dead process — clean up and re-acquire.
+                try? FileManager.default.removeItem(at: activeCaptureURL)
             }
-            if processIsRunning(active.pid) {
-                return false
-            }
-
+            // Lock directory exists without a valid capture record — orphaned from a prior
+            // crash or interrupted releaseActiveCapture. Force-remove and retry.
             try? FileManager.default.removeItem(at: activeCaptureLockDirectory)
-            try? FileManager.default.removeItem(at: activeCaptureURL)
             try FileManager.default.createDirectory(at: activeCaptureLockDirectory, withIntermediateDirectories: false)
         }
 

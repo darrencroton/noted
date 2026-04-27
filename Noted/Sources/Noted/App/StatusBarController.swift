@@ -11,7 +11,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var recordingState: RecordingState?
     private var sessionController: SessionController?
     private var runtimePollTimer: Timer?
-    private var adHocStartInProgress = false
     private var adHocStartProcess: Process?
     private var stopProcess: Process?
 
@@ -60,15 +59,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
 
         let activeCapture = RuntimeFiles.readLiveActiveCapture()
+        let isStarting = adHocStartProcess?.isRunning == true
+        let canStart = activeCapture == nil && !isStarting
+        appendMenuLog("menu_built canStart=\(canStart) activeCapture=\(activeCapture != nil) isStarting=\(isStarting) stopProcess=\(stopProcess != nil)")
 
-        let start = makeItem("Start Ad Hoc Session", action: #selector(startRecording(_:)))
-        start.isEnabled = activeCapture == nil && !adHocStartInProgress
-        menu.addItem(start)
-
-        if activeCapture != nil {
-            let stop = makeItem("Stop Recording", action: #selector(stopActiveCapture(_:)))
-            stop.isEnabled = true
-            menu.addItem(stop)
+        if canStart {
+            menu.addItem(makeItem("Start Ad Hoc Session", action: #selector(startRecording(_:))))
+        } else if activeCapture != nil {
+            menu.addItem(makeItem("Stop Recording", action: #selector(stopActiveCapture(_:))))
         }
 
         let settingsItem = makeItem("Settings...", action: #selector(showSettings(_:)))
@@ -89,30 +87,26 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     private func updateIcon() {
         guard let button = statusItem?.button else { return }
-        let symbol: String
-        switch currentRuntimeSessionStatus()?.status.status {
-        case "recording":
-            symbol = "record.circle.fill"
-        case "processing":
-            symbol = "gearshape.2.fill"
-        case "completed", "completed_with_warnings":
-            symbol = "checkmark.circle.fill"
-        case "failed":
-            symbol = "exclamationmark.triangle.fill"
-        default:
-            switch recordingState?.phase ?? .idle {
-            case .idle:
-                symbol = "waveform"
-            case .starting, .recording:
-                symbol = "record.circle.fill"
-            case .stopping, .processing:
-                symbol = "gearshape.2.fill"
-            case .failed:
-                symbol = "exclamationmark.triangle.fill"
-            }
+        // While a stop command is in flight, treat as not-recording immediately so the
+        // icon reverts the instant the user clicks Stop regardless of file cleanup timing.
+        let isRecording: Bool
+        if stopProcess != nil {
+            isRecording = false
+        } else {
+            let phase = recordingState?.phase ?? .idle
+            isRecording = adHocStartProcess?.isRunning == true
+                || RuntimeFiles.readLiveActiveCapture() != nil
+                || phase == .starting || phase == .recording
         }
-        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: "noted")
-        button.image?.isTemplate = symbol != "record.circle.fill"
+        if isRecording {
+            let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+            button.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "noted")?
+                .withSymbolConfiguration(config)
+            button.image?.isTemplate = false
+        } else {
+            button.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "noted")
+            button.image?.isTemplate = true
+        }
     }
 
     private func currentRuntimeSessionStatus() -> RuntimeSessionStatus? {
@@ -156,7 +150,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func startRecording(_ sender: NSMenuItem) {
         appendMenuLog("start_ad_hoc_clicked")
         guard RuntimeFiles.readLiveActiveCapture() == nil,
-              !adHocStartInProgress,
               adHocStartProcess?.isRunning != true else {
             appendMenuLog("start_ad_hoc_ignored busy_or_active")
             NSSound.beep()
@@ -175,11 +168,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             )
             process.terminationHandler = { [weak self] process in
                 DispatchQueue.main.async { [weak self] in
-                    self?.adHocStartInProgress = false
                     self?.adHocStartProcess = nil
                     self?.appendMenuLog("start_ad_hoc_completed session_id=\(written.manifest.sessionID) exit_code=\(process.terminationStatus)")
                     self?.updateIcon()
-                    if process.terminationStatus != 0 {
+                    if process.terminationStatus != 0 && process.terminationReason == .exit {
                         self?.showAdHocStartFailure(
                             status: Int(process.terminationStatus),
                             sessionDir: URL(fileURLWithPath: written.manifest.paths.sessionDir)
@@ -187,12 +179,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                     }
                 }
             }
-            adHocStartInProgress = true
             adHocStartProcess = process
             try process.run()
             updateIcon()
         } catch {
-            adHocStartInProgress = false
             adHocStartProcess = nil
             appendMenuLog("start_ad_hoc_failed error=\(error.localizedDescription)")
             NSSound.beep()
@@ -213,6 +203,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             return
         }
 
+        // Kill the start process if it is still waiting for startup. The session runner
+        // child is independent and will detect the stop-request on its own. This unblocks
+        // the startRecording guard so a new session can be started once this one is done.
+        if adHocStartProcess?.isRunning == true {
+            adHocStartProcess?.terminate()
+        }
+
         do {
             let process = try makeLoggedCLIProcess(
                 arguments: ["stop", "--session-id", active.sessionID],
@@ -222,6 +219,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 DispatchQueue.main.async { [weak self] in
                     self?.stopProcess = nil
                     self?.appendMenuLog("stop_recording_completed session_id=\(active.sessionID) exit_code=\(process.terminationStatus)")
+                    // Defensive cleanup: if the session runner didn't release the capture
+                    // before noted-stop returned (e.g. model still loading at stop time),
+                    // remove it here so the menu and icon reflect the stopped state.
+                    RuntimeFiles.releaseActiveCapture(sessionID: active.sessionID)
                     self?.updateIcon()
                 }
             }

@@ -670,8 +670,9 @@ struct NotedCLI {
                 currentExtensionMinutes: inMemoryExtensionMinutes,
                 preEndPromptShown: inMemoryPreEndPromptShown
             )
-            try RuntimeFiles.writeCaptureFinalized(sessionID: manifest.sessionID, sessionDir: sessionDir)
             RuntimeFiles.releaseActiveCapture(sessionID: manifest.sessionID)
+            playRecordingBell()
+            try RuntimeFiles.writeCaptureFinalized(sessionID: manifest.sessionID, sessionDir: sessionDir)
 
             // For auto-switch: spawn the next session immediately after releasing the capture lock
             // so both the old session's postProcess and the new session's startup run concurrently.
