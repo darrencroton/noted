@@ -1,15 +1,15 @@
 import Foundation
 import XCTest
 
-/// Phase 5A contract tests — 5A-02 (`noted wait` exit-code and JSON-shape contract).
+/// Wait command contract tests.
 ///
 /// These tests validate the documented CLI contract for the `wait` command without invoking
 /// the main application. They verify:
-/// - The exit-code values match §9.4.1 of the master plan.
+/// - The exit-code values match the CLI contract of the master plan.
 /// - The stdout JSON shapes for success and timeout are well-formed.
-final class Phase5ContractTests: XCTestCase {
+final class WaitContractTests: XCTestCase {
 
-    // MARK: - 5A-02: `noted wait` exit-code contract (§9.4.1)
+    // MARK: - `noted wait` exit-code contract (the CLI contract)
 
     func testWaitExitCodeContractIsDocumented() {
         // These constants are the stable, callee-facing contract for noted wait.
@@ -18,10 +18,10 @@ final class Phase5ContractTests: XCTestCase {
         let unknownSessionCode = 2  // unknown session ID (also used for missing --session-id)
         let timeoutCode       = 7   // --timeout-seconds elapsed before terminal state
 
-        XCTAssertEqual(successCode, 0,        "success must be 0 per §9.4.1")
-        XCTAssertEqual(unknownSessionCode, 2, "unknown session must be 2 per §9.4.1")
-        XCTAssertEqual(timeoutCode, 7,        "timeout must be 7 per §9.4.1")
-        // 7 must not collide with other well-known exit codes (2–6 used by other commands).
+        XCTAssertEqual(successCode, 0,        "success must be 0 per the CLI contract")
+        XCTAssertEqual(unknownSessionCode, 2, "unknown session must be 2 per the CLI contract")
+        XCTAssertEqual(timeoutCode, 7,        "timeout must be 7 per the CLI contract")
+        // 7 must not collide with other well-known exit codes (2-6 used by other commands).
         XCTAssertTrue(timeoutCode > 6, "timeout code must be > 6 to avoid collisions")
     }
 
@@ -68,15 +68,15 @@ final class Phase5ContractTests: XCTestCase {
     }
 
     func testWaitTerminalStatusValuesAreFromLockedVocabulary() {
-        // §26.2: terminal_status must be one of the three locked values.
+        // the locked vocabulary: terminal_status must be one of the three locked values.
         let lockedValues: Set<String> = ["completed", "completed_with_warnings", "failed"]
         for value in lockedValues {
             XCTAssertTrue(lockedValues.contains(value),
-                          "\(value) is not in the locked terminal_status vocabulary (§26.2)")
+                          "\(value) is not in the locked terminal_status vocabulary (the locked vocabulary)")
         }
         // An out-of-vocabulary value must not appear in a wait success response.
         let rogue = "done"
         XCTAssertFalse(lockedValues.contains(rogue),
-                       "'\(rogue)' must not be accepted as a terminal_status (§26.2)")
+                       "'\(rogue)' must not be accepted as a terminal_status (the locked vocabulary)")
     }
 }

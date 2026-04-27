@@ -6,13 +6,13 @@ IDENTIFIER="app.noted.macos"
 PROFILE_NAME="Noted"
 
 ROOT_DIR="$(pwd)"
-SWIFT_DIR="$ROOT_DIR/HushScribe"
+SWIFT_DIR="$ROOT_DIR/Noted"
 APP_BUNDLE="$ROOT_DIR/dist/$APP_NAME.app"
 CONTENTS="$APP_BUNDLE/Contents"
 DMG_NAME="dist/${APP_NAME}.dmg"
-ENTITLEMENTS="$SWIFT_DIR/Sources/HushScribe/Noted.entitlements"
+ENTITLEMENTS="$SWIFT_DIR/Sources/Noted/Noted.entitlements"
 BINARY_PATH=".build/release/$APP_NAME"
-ICON_PATH="$SWIFT_DIR/Sources/HushScribe/Assets/AppIcon.icns"
+ICON_PATH="$SWIFT_DIR/Sources/Noted/Assets/AppIcon.icns"
 
 DEVELOPER_ID=$(security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application" | head -1 | awk '{print $2}' || true)
 
@@ -37,12 +37,12 @@ if [[ -f "$ICON_PATH" ]]; then
   cp "$ICON_PATH" "$CONTENTS/Resources/AppIcon.icns"
 fi
 
-LOGO_PATH="$SWIFT_DIR/Sources/HushScribe/Assets/logo.svg"
+LOGO_PATH="$SWIFT_DIR/Sources/Noted/Assets/logo.svg"
 if [[ -f "$LOGO_PATH" ]]; then
   cp "$LOGO_PATH" "$CONTENTS/Resources/logo.svg"
 fi
 
-cp "$SWIFT_DIR/Sources/HushScribe/Info.plist" "$CONTENTS/Info.plist"
+cp "$SWIFT_DIR/Sources/Noted/Info.plist" "$CONTENTS/Info.plist"
 
 if [[ -n "$DEVELOPER_ID" ]]; then
   find "$APP_BUNDLE" -type f \( -name "*.dylib" -o -name "*.framework" -o -name "*.so" \) -print0 | xargs -0 -I {} \

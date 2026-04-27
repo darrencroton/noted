@@ -2,10 +2,10 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PACKAGE_DIR="$ROOT_DIR/HushScribe"
+PACKAGE_DIR="$ROOT_DIR/Noted"
 BIN="$PACKAGE_DIR/.build/debug/Noted"
 FIXTURES="$ROOT_DIR/vendor/contracts/contracts/fixtures/manifests"
-SMOKE_ROOT="${NOTED_CAPTURE_SMOKE_ROOT:-/tmp/noted-phase2-smoke}"
+SMOKE_ROOT="${NOTED_CAPTURE_SMOKE_ROOT:-/tmp/noted-contract-smoke}"
 
 cd "$PACKAGE_DIR"
 swift build
@@ -24,7 +24,7 @@ for fixture in "$FIXTURES"/invalid-*.json; do
 done
 
 DUP_ROOT="$(mktemp -d /tmp/noted-duplicate-start.XXXXXX)"
-DUP_SESSION_ID="phase2-duplicate-$$"
+DUP_SESSION_ID="duplicate-$$"
 DUP_MANIFEST="$DUP_ROOT/manifest.json"
 DUP_SESSION_DIR="$DUP_ROOT/session"
 mkdir -p "$DUP_SESSION_DIR/outputs"
@@ -53,14 +53,14 @@ if ! grep -q '"sentinel":true' "$DUP_SESSION_DIR/outputs/completion.json"; then
 fi
 
 if [[ "${NOTED_RUN_CAPTURE_SMOKE:-0}" != "1" ]]; then
-  echo "Phase 2 fixture contract smoke passed. Live capture smoke skipped; set NOTED_RUN_CAPTURE_SMOKE=1 to run it."
+  echo "Fixture contract smoke passed. Live capture smoke skipped; set NOTED_RUN_CAPTURE_SMOKE=1 to run it."
   exit 0
 fi
 
 rm -rf "$SMOKE_ROOT"
 mkdir -p "$SMOKE_ROOT/manifests" "$SMOKE_ROOT/sessions" "$SMOKE_ROOT/vault"
 
-SESSION_ID="phase2-smoke-$(date +%Y%m%d%H%M%S)-$$"
+SESSION_ID="contract-smoke-$(date +%Y%m%d%H%M%S)-$$"
 MANIFEST="$SMOKE_ROOT/manifests/$SESSION_ID.json"
 SESSION_DIR="$SMOKE_ROOT/sessions/$SESSION_ID"
 CAPTURE_SECONDS="${NOTED_CAPTURE_SMOKE_SECONDS:-3}"
@@ -79,13 +79,13 @@ with open(source, "r", encoding="utf-8") as handle:
 now = datetime.now().astimezone().isoformat(timespec="seconds")
 manifest["session_id"] = session_id
 manifest["created_at"] = now
-manifest["meeting"]["title"] = "Phase 2 smoke"
+manifest["meeting"]["title"] = "Contract smoke"
 manifest["meeting"]["start_time"] = now
 manifest["meeting"]["scheduled_end_time"] = None
 manifest["meeting"]["timezone"] = datetime.now().astimezone().tzinfo.key if hasattr(datetime.now().astimezone().tzinfo, "key") else "Local"
 manifest["paths"]["session_dir"] = session_dir
 manifest["paths"]["output_dir"] = f"{session_dir}/outputs"
-manifest["paths"]["note_path"] = f"{smoke_root}/vault/phase2-smoke.md"
+manifest["paths"]["note_path"] = f"{smoke_root}/vault/contract-smoke.md"
 manifest["transcription"]["asr_backend"] = "sfspeech"
 manifest["transcription"]["diarization_enabled"] = False
 manifest["hooks"]["completion_callback"] = None
@@ -111,8 +111,8 @@ PY
 
 sleep "$CAPTURE_SECONDS"
 
-"$BIN" status --session-id "$SESSION_ID" >/tmp/noted-phase2-status.json
-/usr/bin/python3 - /tmp/noted-phase2-status.json <<'PY'
+"$BIN" status --session-id "$SESSION_ID" >/tmp/noted-contract-status.json
+/usr/bin/python3 - /tmp/noted-contract-status.json <<'PY'
 import json
 import sys
 
@@ -169,8 +169,8 @@ with open(target, "w", encoding="utf-8") as handle:
     json.dump(manifest, handle, indent=2, sort_keys=True)
     handle.write("\n")
 PY
-  "$BIN" start --manifest "$NEXT_MANIFEST" >/tmp/noted-phase2-overlap.json
-  /usr/bin/python3 - /tmp/noted-phase2-overlap.json "$NEXT_SESSION_ID" <<'PY'
+  "$BIN" start --manifest "$NEXT_MANIFEST" >/tmp/noted-contract-overlap.json
+  /usr/bin/python3 - /tmp/noted-contract-overlap.json "$NEXT_SESSION_ID" <<'PY'
 import json
 import sys
 
@@ -240,4 +240,4 @@ if [[ -n "$OVERLAP_SESSION_DIR" ]]; then
   fi
 fi
 
-echo "Phase 2 live capture smoke passed: $SESSION_DIR"
+echo "Live capture smoke passed: $SESSION_DIR"

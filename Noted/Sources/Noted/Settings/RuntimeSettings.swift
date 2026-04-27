@@ -159,13 +159,13 @@ struct RuntimeSettings: Sendable {
         var directory = url.hasDirectoryPath ? url : url.deletingLastPathComponent()
 
         while true {
-            let repoPackage = directory.appendingPathComponent("HushScribe/Package.swift").path
+            let repoPackage = directory.appendingPathComponent("Noted/Package.swift").path
             if fileManager.fileExists(atPath: repoPackage) {
                 return directory
             }
 
             let package = directory.appendingPathComponent("Package.swift").path
-            if directory.lastPathComponent == "HushScribe",
+            if directory.lastPathComponent == "Noted",
                fileManager.fileExists(atPath: package) {
                 return directory.deletingLastPathComponent()
             }

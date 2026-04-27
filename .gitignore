@@ -1,6 +1,6 @@
 # Build artifacts
-HushScribe/.build/
-HushScribe/.swiftpm/
+Noted/.build/
+Noted/.swiftpm/
 dist/
 build/
 .claude/
@@ -14,7 +14,7 @@ build/
 
 # Misc
 *.spec
-HushScribe/HushScribe.dmg
+Noted/Noted.dmg
 todo.md
 
 briefing-noted-contracts

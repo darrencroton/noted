@@ -1,135 +1,132 @@
 # noted Architecture
 
-`noted` is the capture runtime for the Meeting Intelligence System. It accepts manifests from `briefing`, captures and transcribes audio on device, and hands a completed session directory back to `briefing session-ingest`.
+`noted` is the Meeting Intelligence runtime agent. It accepts a manifest, captures audio, streams transcription, performs post-session diarization, writes `outputs/completion.json`, and optionally invokes `briefing session-ingest`.
 
-## Runtime Shape (Phase 2)
+It has no calendar, source-gathering, LLM, or note-writing responsibilities.
 
+## Runtime Flow
+
+```text
+noted start --manifest <manifest.json>
+  |
+  | validate manifest and acquire active-capture lock
+  | prepare paths.session_dir
+  | write runtime/status.json
+  v
+spawn __run-session child
+  |
+  | play recording-start bell
+  | capture room mic or mic + system audio
+  | stream transcript.txt and transcript.json
+  |
+  +-- noted stop --session-id <id>
+        |
+        | flush and persist raw audio
+        | acknowledge capture-finalized
+        | return to caller
+        v
+      background post-processing
+        |
+        | offline diarization
+        | write completion.json
+        | optionally run briefing session-ingest
 ```
-CLI invocation (noted start --manifest ...)
-   |
-   v
-NotedCLI (start)
-   |  validates manifest, prepares session dir, writes status.json
-   |
-   +--> spawns __run-session child process
-   |       |
-   |       +--> TranscriptionEngine.start()
-   |       |       |--> MicCapture ---------> raw_room.wav / raw_mic.wav
-   |       |       +--> SystemAudioCapture -> raw_system.wav (mic_plus_system only)
-   |       |                                       |
-   |       |                               StreamingTranscriber
-   |       |                               (FluidAudio VAD + ASRBackend)
-   |       |                                       |
-   |       |                               TranscriptLogger
-   |       |                               (transcript.txt, transcript.json)
-   |       |
-   |       +--> on noted stop --session-id:
-   |               audio flush → capture-finalized handshake
-   |               → OfflineDiarizerManager → diarization.json
-   |               → CompletionWriter → outputs/completion.json
-   |
-   v
-NotedCLI (stop) returns EXIT:0 after audio flush; post-processing runs async
-```
+
+`stop` must remain fast. Completion is intentionally written after post-processing, not before the stop command returns.
 
 ## Source Tree
 
-```
-HushScribe/Sources/HushScribe/
-├── App/
-│   ├── NotedApp.swift              # app entry and shared services; routes CLI vs. menubar
-│   ├── SessionController.swift     # menubar manual session lifecycle (legacy path)
-│   └── StatusBarController.swift   # menubar menu and status/settings windows
-├── Audio/
-│   ├── MicCapture.swift
-│   └── SystemAudioCapture.swift
-├── CLI/
-│   ├── Manifest.swift              # manifest model + contract-aware validator
-│   ├── NotedCLI.swift              # start, stop, status, validate-manifest, version, __run-session
-│   └── RuntimeFiles.swift          # registry, active-capture lock, status/stop/completion helpers
-├── Models/
-│   ├── Models.swift
-│   └── RecordingState.swift
-├── Settings/
-│   ├── AppSettings.swift           # menubar UI preferences (UserDefaults-backed)
-│   └── RuntimeSettings.swift       # CLI runtime settings (TOML-backed, settings.toml)
-├── Storage/
-│   ├── SessionStore.swift          # canonical Phase 2 session directory creation
-│   └── TranscriptLogger.swift      # transcript.txt, transcript.json, diarization.json writers
-├── Transcription/
-│   ├── ASRBackend.swift
-│   ├── SFSpeechBackend.swift
-│   ├── StreamingTranscriber.swift
-│   ├── TranscriptionEngine.swift
-│   └── WhisperKitBackend.swift
-└── Views/
-    └── SettingsView.swift
+```text
+Noted/
+|-- Package.swift
+|-- Sources/Noted/
+|   |-- App/             app entry, menubar controller, popup/status windows
+|   |-- Audio/           microphone and ScreenCaptureKit system-audio capture
+|   |-- CLI/             command router, manifest validator, runtime files
+|   |-- Models/          runtime and recording state types
+|   |-- Settings/        TOML runtime settings and UI preferences
+|   |-- Storage/         session directory and transcript writers
+|   |-- Transcription/   ASR backends and streaming transcription
+|   `-- Views/           SwiftUI settings/status views
+`-- Tests/NotedContractTests/
 ```
 
-Contract tests: `HushScribe/Tests/NotedContractTests/FixtureContractTests.swift`
+The executable target is `Noted`; the installed CLI convention is the lowercase symlink `noted`.
 
-The source directory still carries the inherited `HushScribe` path name. The package, executable, bundle display name, and bundle identifier are `noted`-specific (`app.noted.macos`).
+## Settings And State
 
-## Removed From Runtime Scope (at strip)
+Runtime settings:
 
-- MLX summary engine and all Qwen/Gemma model-download logic.
-- Apple NaturalLanguage summary service.
-- Transcript viewer and summary UI.
-- Main transcript window.
-- Meeting-app auto-detection.
-- Post-session speaker naming UI.
-- Homebrew cask and GitHub Pages marketing site.
-
-Archived files live locally under ignored `archive/hushscribe-strip/` for reference.
-
-## Session Directory Output
-
-Phase 2 canonical output under the manifest-specified `paths.session_dir`:
-
+```text
+~/Library/Application Support/noted/settings.toml
 ```
+
+Runtime registry and active-capture files:
+
+```text
+~/Library/Application Support/noted/runtime/
+~/Library/Application Support/noted/sessions/
+```
+
+Session artefacts are written under the manifest-provided `paths.session_dir`; no consumer should infer outcome from logs or partial files.
+
+## Session Directory
+
+```text
 <session_dir>/
-├── manifest.json
-├── audio/
-│   └── raw_room.wav                 # room_mic strategy
-│   # OR raw_mic.wav + raw_system.wav  # mic_plus_system strategy
-├── transcript/
-│   ├── transcript.txt
-│   ├── transcript.json
-│   └── segments.json                # optional
-├── diarization/
-│   └── diarization.json             # when diarization enabled and succeeds
-├── outputs/
-│   └── completion.json              # sole terminal outcome source; written last
-├── runtime/
-│   └── status.json                  # atomic rewrite at every phase transition
-└── logs/
-    └── noted.log
+|-- manifest.json
+|-- audio/
+|   |-- raw_room.wav
+|   |-- raw_mic.wav
+|   `-- raw_system.wav
+|-- transcript/
+|   |-- transcript.txt
+|   |-- transcript.json
+|   `-- segments.json
+|-- diarization/
+|   `-- diarization.json
+|-- outputs/
+|   `-- completion.json
+|-- runtime/
+|   |-- status.json
+|   `-- ui_state.json
+`-- logs/
+    |-- noted.log
+    |-- briefing-ingest.stdout.log
+    `-- briefing-ingest.stderr.log
 ```
 
-`completion.json` is the only file `briefing session-ingest` reads to determine session outcome. It must never be inferred from file presence or log content.
+Room-mic sessions write `audio/raw_room.wav`. Mic-plus-system sessions write `audio/raw_mic.wav` and `audio/raw_system.wav`.
 
-## What Comes Next (Phase 3 and Beyond)
+## Contracts
 
-- Phase 3: end-of-meeting popup (`extend`, `switch-next`), auto-stop and auto-switch timers, `runtime/ui_state.json`.
-- Phase 3: `noted start` via menubar with canonical ad hoc manifests (N-23).
-- Phase 4: automatic `briefing session-ingest` invocation after completion (N-21, N-22).
-- Phase 5: crash recovery, retention hooks, online/hybrid capture.
+`noted` is pinned to the checked-in contracts snapshot under `vendor/contracts/`. Contract tests validate:
 
-`briefing` remains the owner of calendar interpretation, manifest contents, summarisation, and Obsidian note writing.
+- manifest fixtures
+- completion fixture compatibility
+- CLI JSON and exit-code shapes
+- end-of-meeting action state
+- `wait` behavior
+- automatic `briefing` handoff log files
+
+## Boundaries
+
+`noted` must not:
+
+- read calendars
+- decide meeting eligibility
+- infer next meetings
+- summarise transcripts
+- call LLMs
+- write Obsidian notes
+
+`briefing` owns those concerns. The boundary is the manifest, CLI, runtime status, and completion file.
 
 ## Build
 
 ```bash
-cd HushScribe
+cd Noted
 swift build
 ```
 
 Requirements are Apple Silicon, macOS 26+, and Xcode 26.3+.
-
-## Dependencies
-
-| Library | Purpose |
-| --- | --- |
-| FluidAudio | Parakeet-TDT ASR, VAD, offline diarization |
-| WhisperKit | Local Whisper ASR |
-| Apple Speech | Optional built-in ASR backend |

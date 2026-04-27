@@ -1,19 +1,19 @@
 import Foundation
 import XCTest
 
-/// Phase 4 contract tests — N-21 (configurable briefing command), N-22 (completion handoff),
-/// N-23 (ad hoc manifest writer).
+/// Completion handoff contract tests:
+/// ad hoc manifests, configurable briefing command, and completion handoff.
 ///
-/// These tests validate the file-based contracts and JSON formats introduced in Phase 4.
+/// These tests validate the file-based contracts and JSON formats current handoff.
 /// They do not invoke the main module; production types are verified by inspecting fixtures
 /// and constructing representative values directly.
-final class Phase4ContractTests: XCTestCase {
+final class HandoffContractTests: XCTestCase {
 
-    // MARK: - N-23: Ad hoc manifest contract
+    // MARK: - Ad hoc manifest contract
 
     func testAdHocManifestFixturePermitsNullEventIdAndScheduledEndTime() throws {
         // §20.1: ad hoc manifests are full canonical manifests with allowed nulls.
-        // event_id and scheduled_end_time must be present as explicit JSON null, not absent —
+        // event_id and scheduled_end_time must be present as explicit JSON null, not absent -
         // a missing key would mean the field was never set, which is different from "no event".
         let manifest = try loadFixture("manifests/valid-adhoc.json")
         let meeting = try XCTUnwrap(manifest["meeting"] as? [String: Any])
@@ -50,12 +50,12 @@ final class Phase4ContractTests: XCTestCase {
                        "output_dir must equal session_dir/outputs")
     }
 
-    // MARK: - N-21/N-22: Completion handoff contract
+    // MARK: - Completion handoff contract
 
     func testHandoffSkipLogPrefixesAreGreppable() {
         // The smoke script (scripts/meeting-intelligence-smoke.sh) greps for these exact
         // prefixes to detect whether the automatic handoff ran, was skipped, or failed.
-        // These constants document the contract between the implementation and the script —
+        // These constants document the contract between the implementation and the script -
         // changing one without the other breaks the smoke harness.
         let skippedDisabled = "briefing ingest skipped: ingest_after_completion=false"
         let skippedEmpty    = "briefing ingest skipped: briefing_command is empty"
@@ -76,21 +76,21 @@ final class Phase4ContractTests: XCTestCase {
     }
 
     func testHandoffStartingLogContainsBoundaryDiagnosticFields() {
-        // B-22: the "briefing ingest starting" entry must carry enough context for the operator
+        // the "briefing ingest starting" entry must carry enough context for the operator
         // to trace the handoff without opening the captured log files.
         let entry = "briefing ingest starting: command=briefing session_id=20260425T1430000000-ad-hoc terminal_status=completed stdout=/path/to/stdout.log stderr=/path/to/stderr.log"
         for field in ["command=", "session_id=", "terminal_status=", "stdout=", "stderr="] {
             XCTAssertTrue(entry.contains(field),
-                          "starting log must contain '\(field)' for B-22 cross-boundary diagnostics")
+                          "starting log must contain '\(field)' for cross-boundary diagnostics")
         }
     }
 
     func testHandoffCompletedLogContainsExitCode() {
-        // B-22: the "briefing ingest completed" entry must include exit_code so a non-zero
+        // the "briefing ingest completed" entry must include exit_code so a non-zero
         // result from briefing is visible in noted.log without reading the captured stderr.
         let entry = "briefing ingest completed: command=briefing exit_code=0 session_id=test terminal_status=completed stdout=/tmp/s.log stderr=/tmp/e.log"
         XCTAssertTrue(entry.contains("exit_code="),
-                      "completed log must include 'exit_code=' for B-22 diagnostics")
+                      "completed log must include 'exit_code=' for handoff diagnostics")
     }
 
     // MARK: - Helpers

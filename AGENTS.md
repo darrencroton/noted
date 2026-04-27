@@ -1,100 +1,83 @@
 # AGENTS.md
 
-This file provides guidance to Codex when working in this repository.
+This file provides guidance when working in this repository.
 
-## What is noted
+## What `noted` is
 
-`noted` is the macOS menubar capture agent for the Meeting Intelligence System. It is Apple Silicon only, targets macOS 26+, captures microphone and system audio locally, transcribes on device, diarizes after recording, and writes session artefacts for later ingestion by `briefing`.
+`noted` is the macOS menubar capture agent for the Meeting Intelligence System. It is Apple Silicon only, targets macOS 26+, captures microphone and system audio locally, transcribes on device, diarizes after recording, and writes session artefacts for ingestion by `briefing`.
 
 `noted` must remain a runtime agent. It does not read calendars, generate summaries, write Obsidian notes, or decide which meetings should be recorded.
 
-## Build Commands
+## Commands
 
-All commands run from the repo root.
+Run commands from the repo root unless noted otherwise.
 
 ```bash
-# Dev build
-cd HushScribe && swift build
-
-# Local app bundle build, skips notarization
+cd Noted && swift build
+cd Noted && swift test
 ./scripts/release.sh test
-
-# Bump version in Info.plist
-./scripts/bump_version.sh patch   # or minor | major | 0.2.0
-
-# Reset user defaults
+./scripts/contract-smoke.sh
+./scripts/bump_version.sh patch
 defaults delete app.noted.macos
 ```
 
-Contract tests live in `HushScribe/Tests/NotedContractTests/` and validate schema fixtures and the pinned contracts version. There are no other unit tests currently.
+The app bundle build writes `dist/Noted.app`. For local integration with `briefing`, symlink `dist/Noted.app/Contents/MacOS/Noted` to a `noted` command on `PATH`.
 
 ## Project Layout
 
-The Swift package lives in `HushScribe/` for now because that path was inherited from HushScribe. The package and executable are named `Noted`.
-
+```text
+Noted/
+|-- Package.swift
+|-- Sources/Noted/
+|   |-- App/             app entry, session controller, status item
+|   |-- Audio/           microphone and system-audio capture
+|   |-- CLI/             command router, manifest validator, runtime files
+|   |-- Models/          domain types and recording state
+|   |-- Settings/        AppSettings and RuntimeSettings
+|   |-- Storage/         session store and transcript writers
+|   |-- Transcription/   ASR backends and streaming transcription
+|   `-- Views/           settings/status UI
+`-- Tests/NotedContractTests/
 ```
-HushScribe/Sources/HushScribe/
-├── App/                  # App entry, session controller, status item
-├── Audio/                # MicCapture, SystemAudioCapture
-├── CLI/                  # NotedCLI, Manifest validator, RuntimeFiles
-├── Models/               # Domain types and recording state
-├── Settings/             # AppSettings, RuntimeSettings (TOML-backed)
-├── Storage/              # SessionStore and TranscriptLogger
-├── Transcription/        # ASRBackend + FluidAudio/WhisperKit/SFSpeech backends
-└── Views/                # Minimal settings view
-```
 
-Archived HushScribe source and website files live locally under ignored `archive/hushscribe-strip/`.
+Local runtime settings live at `~/Library/Application Support/noted/settings.toml`.
 
-## Current Status
+## CLI Surface
 
-Phases 2, 3, 4, and 5A are complete. The full CLI surface is:
-
-```
-noted start            --manifest <path>
-noted stop             --session-id <id>
-noted extend           --session-id <id> --minutes N
-noted switch-next      --session-id <id>
-noted status           --session-id <id>
+```text
+noted start             --manifest <path>
+noted stop              --session-id <id>
+noted extend            --session-id <id> --minutes N
+noted switch-next       --session-id <id>
+noted status            --session-id <id>
 noted validate-manifest --manifest <path>
+noted wait              --session-id <id> [--timeout-seconds N]
 noted version
-noted wait             --session-id <id> [--timeout-seconds N]   # Phase 5A-02
 ```
 
-Phase 5 full hardening starts after the first operational soak. See `docs/implementation-plan.md` for the full ticket history.
+All public command responses are single-line JSON on stdout. Diagnostics go to stderr or session logs.
 
 ## Architecture Notes
 
-- **Menubar app.** `LSUIElement = true`; launching creates only a menubar icon. CLI invocations bypass the menubar and run headlessly.
-- **Full CLI runtime.** All Phase 2-4 commands plus `noted wait` (Phase 5A-02) are implemented. The menubar Start action writes a canonical ad hoc manifest and routes through `noted start --manifest`.
-- **Dual audio streams.** `TranscriptionEngine` owns `MicCapture` and `SystemAudioCapture`. Each stream feeds a `StreamingTranscriber`.
-- **ASR pipeline.** `StreamingTranscriber` runs FluidAudio VAD and then the selected `ASRBackend`.
-- **Post-session diarization.** `OfflineDiarizerManager` runs after stop against the captured audio and writes `diarization/diarization.json` when successful.
-- **Settings.** TOML-backed at `~/Library/Application Support/noted/settings.toml` via `RuntimeSettings.swift`. Legacy `AppSettings` remains for menubar-specific UI preferences.
-- **Output.** Phase 2 canonical session directory under the manifest-specified `paths.session_dir`:
-  ```
-  audio/raw_room.wav          # room-mic capture (mic_plus_system: raw_mic.wav + raw_system.wav)
-  transcript/transcript.txt
-  transcript/transcript.json
-  transcript/segments.json    # optional
-  diarization/diarization.json  # when diarization succeeds
-  outputs/completion.json     # sole terminal outcome source; written last
-  runtime/status.json         # updated at every phase transition
-  logs/noted.log
-  logs/briefing-ingest.stdout.log  # when automatic briefing handoff runs
-  logs/briefing-ingest.stderr.log  # when automatic briefing handoff runs
-  ```
+- `LSUIElement = true`; normal launch creates only a menubar icon.
+- CLI invocations bypass the menubar and run headlessly.
+- The menubar Start action writes a full ad hoc manifest and routes through `noted start --manifest`.
+- `stop` must return after raw audio is flushed; post-processing runs asynchronously.
+- `completion.json` is written last and is the only authoritative session outcome.
+- `RuntimeSettings` is TOML-backed; `AppSettings` is for menubar UI preferences.
+- Raw audio is preserved when capture succeeds.
 
 ## Dependencies
 
 | Package | Purpose |
 | --- | --- |
-| FluidAudio | Parakeet-TDT ASR, Silero VAD, offline diarization |
-| WhisperKit | Whisper Base / Large v3 ASR |
+| FluidAudio | Parakeet-TDT ASR, VAD, offline diarization |
+| WhisperKit | Whisper ASR |
 
-## Key Conventions
+## Conventions
 
 - Swift 6.2 with strict concurrency.
-- The `@Observable` macro is used instead of `ObservableObject`/`@Published`.
-- No Xcode project; build with Swift Package Manager from `HushScribe/`.
-- Version is stored in `Info.plist`.
+- Use Swift Package Manager; there is no Xcode project.
+- Version is stored in `Noted/Sources/Noted/Info.plist`.
+- Never bypass git hooks or amend commits.
+- Never delete files; move retired material to ignored `archive/`.

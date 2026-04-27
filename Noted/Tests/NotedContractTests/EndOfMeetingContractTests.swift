@@ -1,14 +1,14 @@
 import Foundation
 import XCTest
 
-/// Phase 3 contract tests — N-14 through N-20, N-25.
+/// End-of-meeting contract tests.
 ///
-/// These tests validate the file-based IPC contracts and JSON formats introduced in Phase 3.
+/// These tests validate the file-based IPC contracts and JSON formats current runtime.
 /// They do not run real audio capture; that is covered by the smoke-test procedure in
-/// docs/step-7-report.md and its Phase 3 successor.
-final class Phase3ContractTests: XCTestCase {
+/// local capture smoke tests.
+final class EndOfMeetingContractTests: XCTestCase {
 
-    // MARK: - N-14: Prompt scheduler math
+    // MARK: - Prompt scheduler math
 
     func testPromptFiresAtCorrectTime() {
         // scheduled_end_time − pre_end_prompt_minutes
@@ -26,7 +26,7 @@ final class Phase3ContractTests: XCTestCase {
         XCTAssertNil(parsedDate, "nil scheduled_end_time must suppress prompt scheduling")
     }
 
-    // MARK: - N-15: pre-end-prompt.json format
+    // MARK: - pre-end-prompt.json format
 
     func testPreEndPromptJSONContainsRequiredFields() throws {
         let tmp = makeTempDir()
@@ -59,7 +59,7 @@ final class Phase3ContractTests: XCTestCase {
         XCTAssertEqual(loaded["is_follow_up"] as? Bool, true)
     }
 
-    // MARK: - N-16: extend
+    // MARK: - extend
 
     func testExtendComputesNewEndTimeCorrectly() {
         // Extend by 5 minutes adds exactly 300 seconds.
@@ -90,7 +90,7 @@ final class Phase3ContractTests: XCTestCase {
         XCTAssertEqual(existing + 5, 10, "extension minutes must accumulate correctly")
     }
 
-    // MARK: - N-19: ui_state.json
+    // MARK: - ui_state.json
 
     func testUIStateRoundTrip() throws {
         let encoder = JSONEncoder()
@@ -135,7 +135,7 @@ final class Phase3ContractTests: XCTestCase {
         XCTAssertNil(obj["lastActionAt"], "camelCase key must not appear in output")
     }
 
-    // MARK: - N-17 / N-25: switch-next race — manifest fixture coverage
+    // MARK: - switch-next race - manifest fixture coverage
 
     func testNextMeetingFixtureHasManifestPathForRaceTest() throws {
         let manifest = try loadFixture("manifests/valid-with-next-meeting.json")
@@ -168,7 +168,7 @@ final class Phase3ContractTests: XCTestCase {
         XCTAssertTrue(hasExplicitOffset(ts), "next-manifest-missing timestamp must carry an explicit offset")
     }
 
-    // MARK: - N-20: Back-to-back contract requirements
+    // MARK: - Back-to-back contract requirements
 
     func testSessionDirectoryContractIncludesUIState() throws {
         // The session-directory contract (§10.4) lists runtime/ui_state.json as a valid path.
@@ -196,7 +196,7 @@ final class Phase3ContractTests: XCTestCase {
         XCTAssertTrue(contractStopReasons.contains("scheduled_stop"))
     }
 
-    // MARK: - N-12 / N-14: No-interaction grace rule
+    // MARK: - No-interaction grace rule
 
     func testGraceDeadlineComputedFromScheduledEndWhenNextMeetingExists() {
         let scheduledEnd = makeDate(addingMinutes: 60)
@@ -210,7 +210,7 @@ final class Phase3ContractTests: XCTestCase {
     }
 
     func testGraceDeadlineEqualsScheduledEndWhenNoNextMeeting() {
-        // §12.3: No next meeting → auto-stop at scheduled_end_time (grace == 0 offset).
+        // §12.3: No next meeting -> auto-stop at scheduled_end_time (grace == 0 offset).
         let scheduledEnd = makeDate(addingMinutes: 60)
         let graceDeadline = scheduledEnd   // no extra offset
         XCTAssertEqual(graceDeadline, scheduledEnd)

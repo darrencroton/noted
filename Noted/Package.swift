@@ -16,7 +16,7 @@ let package = Package(
                 .product(name: "FluidAudio", package: "FluidAudio"),
                 .product(name: "WhisperKit", package: "WhisperKit"),
             ],
-            path: "Sources/HushScribe",
+            path: "Sources/Noted",
             exclude: ["Info.plist", "Noted.entitlements", "Assets"]
         ),
         .testTarget(

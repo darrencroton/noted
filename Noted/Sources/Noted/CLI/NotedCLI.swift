@@ -351,7 +351,7 @@ struct NotedCLI {
             return 4
         }
 
-        // N-25: Validate before ACK so next-manifest-missing.json is written before the runner
+        // Validate before ACK so next-manifest-missing.json is written before the runner
         // reaches postProcess, regardless of scheduling order between the two processes.
         let nextManifestURL = URL(fileURLWithPath: nextManifestPath)
         let nextManifest = ManifestValidator.validate(fileURL: nextManifestURL).manifest
@@ -457,7 +457,7 @@ struct NotedCLI {
         let completionURL = sessionDir.appendingPathComponent("outputs/completion.json")
         let deadline = Date().addingTimeInterval(Double(timeoutSeconds))
 
-        // Poll every 500 ms. Check immediately on entry — session may already be done.
+        // Poll every 500 ms. Check immediately on entry - session may already be done.
         repeat {
             if FileManager.default.fileExists(atPath: completionURL.path),
                let data = try? Data(contentsOf: completionURL),
@@ -675,7 +675,7 @@ struct NotedCLI {
 
             // For auto-switch: spawn the next session immediately after releasing the capture lock
             // so both the old session's postProcess and the new session's startup run concurrently.
-            // N-25: validate the next manifest first — it may have been deleted by `briefing watch`.
+            // Validate the next manifest first; it may have been archived by `briefing watch`.
             if autoSwitchToNext, let nextPath = manifest.nextMeeting.manifestPath {
                 let nextValidation = ManifestValidator.validate(fileURL: URL(fileURLWithPath: nextPath))
                 if nextValidation.isValid {
@@ -696,7 +696,7 @@ struct NotedCLI {
 
             // For user-driven stop/switch-next, wait for the parent CLI to acknowledge
             // capture-finalized before starting postProcess. For auto-switch initiated by this
-            // process, skip the wait — no parent is listening.
+            // process, skip the wait - no parent is listening.
             if !autoSwitchToNext {
                 await waitForCaptureFinalizedAcknowledgement(sessionDir: sessionDir)
             }
@@ -742,7 +742,7 @@ struct NotedCLI {
         let transcriptOK = FileManager.default.fileExists(atPath: descriptor.transcriptDirectory.appendingPathComponent("transcript.txt").path)
             && FileManager.default.fileExists(atPath: descriptor.transcriptDirectory.appendingPathComponent("transcript.json").path)
 
-        // N-25: include warning when switch-next found the next manifest had been invalidated.
+        // Include a warning when switch-next found the next manifest had been invalidated.
         if FileManager.default.fileExists(atPath: RuntimeFiles.nextManifestMissingURL(sessionDir: descriptor.directory).path) {
             warnings.append("next_manifest_missing")
         }
@@ -1059,7 +1059,7 @@ struct NotedCLI {
         }
         guard childAlive else { return .internal }
 
-        // Phase 2: child is alive — wait up to 90 s for model loading and capture start.
+        // The child is alive; allow model loading and audio startup to finish.
         let modelDeadline = Date().addingTimeInterval(90)
         while Date() < modelDeadline {
             if let status = RuntimeFiles.readStatus(sessionDir: sessionDir) {
@@ -1213,7 +1213,7 @@ struct NotedCLI {
         }
     }
 
-    // Distinct from the recording-start bell (§12.1) — uses "Ping" so the two cues differ.
+    // Distinct from the recording-start bell (§12.1) - uses "Ping" so the two cues differ.
     private func playEndOfMeetingBeep() {
         if let sound = NSSound(named: "Ping") {
             sound.play()
@@ -1238,7 +1238,7 @@ enum ContractSnapshot {
         if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
             return version
         }
-        if let infoURL = findRepositoryRoot()?.appendingPathComponent("HushScribe/Sources/HushScribe/Info.plist"),
+        if let infoURL = findRepositoryRoot()?.appendingPathComponent("Noted/Sources/Noted/Info.plist"),
            let plist = NSDictionary(contentsOf: infoURL),
            let version = plist["CFBundleShortVersionString"] as? String {
             return version

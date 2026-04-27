@@ -9,7 +9,7 @@ Refresh procedure after a new contracts tag is cut:
 ```bash
 ditto ../contracts vendor/contracts/contracts
 printf "vX.Y.Z\n" > vendor/contracts/CONTRACTS_TAG
-cd HushScribe
+cd Noted
 swift test --filter NotedContractTests
 ```
 
