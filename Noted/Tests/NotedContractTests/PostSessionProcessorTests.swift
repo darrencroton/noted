@@ -56,6 +56,103 @@ final class PostSessionProcessorTests: XCTestCase {
         XCTAssertTrue(transcriptText.contains("microphone: fallback transcript"))
     }
 
+    func testMicPlusSystemWritesSourcePrefixedSpeakerLabels() async throws {
+        let fixture = try makeSessionFixture(
+            audioStrategy: "mic_plus_system",
+            micAudioDuration: 2.5,
+            systemAudioDuration: 2.0
+        )
+        let diarizer = PerSourceMockDiarizer(segmentsByFilename: [
+            "raw_mic.wav": [
+                DiarizationSegment(speakerId: "raw-a", startTime: 0.0, endTime: 1.1),
+                DiarizationSegment(speakerId: "raw-b", startTime: 1.2, endTime: 2.3),
+            ],
+            "raw_system.wav": [
+                DiarizationSegment(speakerId: "raw-c", startTime: 0.5, endTime: 1.8),
+            ],
+        ])
+        let transcriber = SequentialMockTranscriber(texts: ["mic first", "mic second", "system first"])
+
+        let result = await PostSessionProcessor(transcriber: transcriber, diarizer: diarizer)
+            .process(manifest: fixture.manifest, descriptor: fixture.descriptor, locale: Locale(identifier: "en-AU"))
+
+        XCTAssertTrue(result.transcriptOK)
+        XCTAssertTrue(result.diarizationOK)
+        XCTAssertEqual(result.errors, [])
+
+        let transcriptText = try String(
+            contentsOf: fixture.descriptor.transcriptDirectory.appendingPathComponent("transcript.txt"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(transcriptText.contains("mic_speaker_0:"))
+        XCTAssertTrue(transcriptText.contains("mic_speaker_1:"))
+        XCTAssertTrue(transcriptText.contains("system_speaker_0:"))
+        // "] speaker_N:" is the unprefixed pattern from room_mic; it must not appear in a mic_plus_system session.
+        XCTAssertFalse(transcriptText.contains("] speaker_"), "Unprefixed speaker labels must not appear in mic_plus_system sessions")
+
+        let document = try loadTranscriptDocument(fixture.descriptor.transcriptDirectory.appendingPathComponent("transcript.json"))
+        let speakerIDs = Set(document.segments.map(\.speakerId))
+        XCTAssertTrue(speakerIDs.contains("mic_speaker_0"))
+        XCTAssertTrue(speakerIDs.contains("mic_speaker_1"))
+        XCTAssertTrue(speakerIDs.contains("system_speaker_0"))
+    }
+
+    func testMicPlusSystemSegmentsMergeChronologically() async throws {
+        let fixture = try makeSessionFixture(
+            audioStrategy: "mic_plus_system",
+            micAudioDuration: 2.5,
+            systemAudioDuration: 2.5
+        )
+        // Mic segment starts later; system segment starts earlier.
+        let diarizer = PerSourceMockDiarizer(segmentsByFilename: [
+            "raw_mic.wav": [DiarizationSegment(speakerId: "m", startTime: 1.5, endTime: 2.4)],
+            "raw_system.wav": [DiarizationSegment(speakerId: "s", startTime: 0.1, endTime: 1.0)],
+        ])
+        let transcriber = SequentialMockTranscriber(texts: ["mic text", "system text"])
+
+        let result = await PostSessionProcessor(transcriber: transcriber, diarizer: diarizer)
+            .process(manifest: fixture.manifest, descriptor: fixture.descriptor, locale: Locale(identifier: "en-AU"))
+
+        XCTAssertTrue(result.transcriptOK)
+        let transcriptText = try String(
+            contentsOf: fixture.descriptor.transcriptDirectory.appendingPathComponent("transcript.txt"),
+            encoding: .utf8
+        )
+        // system_speaker_0 (t=0.1) must precede mic_speaker_0 (t=1.5) in the output.
+        let systemRange = transcriptText.range(of: "system_speaker_0:")
+        let micRange = transcriptText.range(of: "mic_speaker_0:")
+        XCTAssertNotNil(systemRange)
+        XCTAssertNotNil(micRange)
+        if let sysPos = systemRange, let micPos = micRange {
+            XCTAssertLessThan(sysPos.lowerBound, micPos.lowerBound, "Earlier system segment must appear before later mic segment")
+        }
+    }
+
+    func testMicPlusSystemMissingSystemSourceFallsBackGracefully() async throws {
+        let fixture = try makeSessionFixture(
+            audioStrategy: "mic_plus_system",
+            micAudioDuration: 2.0,
+            systemAudioDuration: nil  // system audio file not written
+        )
+        let diarizer = PerSourceMockDiarizer(segmentsByFilename: [
+            "raw_mic.wav": [DiarizationSegment(speakerId: "raw-a", startTime: 0.0, endTime: 1.8)],
+        ])
+        let transcriber = SequentialMockTranscriber(texts: ["mic only text"])
+
+        let result = await PostSessionProcessor(transcriber: transcriber, diarizer: diarizer)
+            .process(manifest: fixture.manifest, descriptor: fixture.descriptor, locale: Locale(identifier: "en-AU"))
+
+        XCTAssertTrue(result.transcriptOK, "Mic source must still produce a transcript")
+        XCTAssertFalse(result.diarizationOK, "diarizationOK must be false when one source is missing")
+        XCTAssertTrue(result.warnings.contains("system_audio_missing"))
+
+        let transcriptText = try String(
+            contentsOf: fixture.descriptor.transcriptDirectory.appendingPathComponent("transcript.txt"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(transcriptText.contains("mic only text"))
+    }
+
     func testSpeakerCountHintRetriesWhenInitialDiarizationCollapsesToOneSpeaker() async throws {
         let recorder = DiarizationConfigRecorder()
         let runner = MockDiarizationRunner(
@@ -84,6 +181,14 @@ final class PostSessionProcessorTests: XCTestCase {
     }
 
     private func makeSessionFixture(audioDuration: Double) throws -> SessionFixture {
+        try makeSessionFixture(audioStrategy: "room_mic", micAudioDuration: audioDuration, systemAudioDuration: nil)
+    }
+
+    private func makeSessionFixture(
+        audioStrategy: String,
+        micAudioDuration: Double,
+        systemAudioDuration: Double?
+    ) throws -> SessionFixture {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("noted-post-session-\(UUID().uuidString)", isDirectory: true)
         let descriptor = SessionDescriptor(
@@ -91,11 +196,15 @@ final class PostSessionProcessorTests: XCTestCase {
             directory: root,
             type: .meeting,
             startedAt: Date(timeIntervalSince1970: 0),
-            audioStrategy: "room_mic"
+            audioStrategy: audioStrategy
         )
         try SessionStore.createCanonicalDirectories(at: root)
-        try writeTestWAV(to: descriptor.microphoneAudioURL, duration: audioDuration)
+        try writeTestWAV(to: descriptor.microphoneAudioURL, duration: micAudioDuration)
+        if let sysDuration = systemAudioDuration {
+            try writeTestWAV(to: descriptor.systemAudioURL, duration: sysDuration)
+        }
 
+        let modeType = audioStrategy == "mic_plus_system" ? "online" : "in_person"
         let manifest = SessionManifest(
             schemaVersion: "1.0",
             sessionID: descriptor.id,
@@ -107,7 +216,7 @@ final class PostSessionProcessorTests: XCTestCase {
                 scheduledEndTime: nil,
                 timezone: "Australia/Melbourne"
             ),
-            mode: .init(type: "in_person", audioStrategy: "room_mic"),
+            mode: .init(type: modeType, audioStrategy: audioStrategy),
             participants: .init(
                 hostName: "Host",
                 attendeesExpected: 2,
@@ -221,4 +330,30 @@ private final class LockedIndex: @unchecked Sendable {
 
 private struct TestTranscriptDocument: Decodable {
     let segments: [FinalTranscriptSegment]
+}
+
+@MainActor
+private final class PerSourceMockDiarizer: PostSessionDiarizing {
+    private let segmentsByFilename: [String: [DiarizationSegment]?]
+
+    init(segmentsByFilename: [String: [DiarizationSegment]?]) {
+        self.segmentsByFilename = segmentsByFilename
+    }
+
+    func diarizeAudio(audioURL: URL, speakerCountHint: Int?) async -> [DiarizationSegment]? {
+        segmentsByFilename[audioURL.lastPathComponent] ?? nil
+    }
+}
+
+@MainActor
+private final class SequentialMockTranscriber: PostSessionTranscribing {
+    private var texts: [String]
+
+    init(texts: [String]) {
+        self.texts = texts
+    }
+
+    func transcribeAudio(_ samples: [Float], source: AudioSource, locale: Locale) async throws -> ASRTranscriptResult {
+        ASRTranscriptResult(text: texts.removeFirst(), confidence: nil)
+    }
 }

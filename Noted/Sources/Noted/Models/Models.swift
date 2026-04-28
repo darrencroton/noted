@@ -16,6 +16,12 @@ struct DiarizationSegment: Codable, Sendable {
     let speakerId: String
     let startTime: Float
     let endTime: Float
+
+    enum CodingKeys: String, CodingKey {
+        case speakerId = "speaker_id"
+        case startTime = "start_time"
+        case endTime = "end_time"
+    }
 }
 
 enum TranscriptAudioSource: String, Codable, Sendable {

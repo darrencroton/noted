@@ -37,11 +37,12 @@ struct SessionDescriptor: Sendable {
         directory.appendingPathComponent("runtime", isDirectory: true)
     }
 
+    var usesMicPlusSystem: Bool { audioStrategy == "mic_plus_system" }
+
     var microphoneAudioURL: URL {
-        if audioStrategy == "mic_plus_system" {
-            return audioDirectory.appendingPathComponent("raw_mic.wav")
-        }
-        return audioDirectory.appendingPathComponent("raw_room.wav")
+        usesMicPlusSystem
+            ? audioDirectory.appendingPathComponent("raw_mic.wav")
+            : audioDirectory.appendingPathComponent("raw_room.wav")
     }
 
     var systemAudioURL: URL {

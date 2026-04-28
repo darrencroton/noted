@@ -289,8 +289,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 try? process.run()
                 process.waitUntilExit()
                 RuntimeFiles.releaseActiveCapture(sessionID: active.sessionID)
-                NSApplication.shared.terminate(nil)
             }
+            NSApplication.shared.terminate(nil)
         }
     }
 }

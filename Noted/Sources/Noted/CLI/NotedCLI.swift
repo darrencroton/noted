@@ -533,8 +533,7 @@ struct NotedCLI {
                 inputDeviceID: settings.defaultInputDevice,
                 rawMicrophoneAudioURL: descriptor.microphoneAudioURL,
                 rawSystemAudioURL: descriptor.systemAudioURL,
-                captureSystemAudio: manifest.resolvedAudioStrategy == "mic_plus_system",
-                sysVadThreshold: settings.sysVadThreshold
+                captureSystemAudio: descriptor.usesMicPlusSystem
             )
 
             if !transcriptionEngine.isRunning {

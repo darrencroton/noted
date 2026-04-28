@@ -151,8 +151,7 @@ final class TranscriptionEngine {
         appBundleID: String? = nil,
         rawMicrophoneAudioURL: URL? = nil,
         rawSystemAudioURL: URL? = nil,
-        captureSystemAudio: Bool = true,
-        sysVadThreshold: Double = 0.92
+        captureSystemAudio: Bool = true
     ) async {
         guard !isRunning else { return }
         lastError = nil
