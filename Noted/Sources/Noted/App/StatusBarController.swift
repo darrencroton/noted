@@ -10,6 +10,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var runtimePollTimer: Timer?
     private var adHocStartProcess: Process?
     private var stopProcess: Process?
+    private var diagLastRecordingState: Bool? = nil // DIAG:
+    private var diagTimerFireCount = 0              // DIAG:
 
     func setup(settings: AppSettings) {
         guard statusItem == nil else { return }
@@ -77,14 +79,28 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
     private func updateIcon() {
         guard let button = statusItem?.button else { return }
-        if isRecording {
+        // DIAG: log every recording-state transition so we can confirm the timer detects recording
+        let recording = isRecording
+        let diagStateChanged = recording != diagLastRecordingState // DIAG:
+        if diagStateChanged {
+            diagLastRecordingState = recording
+            appendMenuLog("diag_icon_state isRecording=\(recording)")
+        }
+        if recording {
             let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
-            button.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "noted")?
-                .withSymbolConfiguration(config)
-            button.image?.isTemplate = false
+            // isTemplate must be set before assignment; mutating button.image after assignment does not trigger re-render.
+            let image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "noted")
+                .flatMap { $0.withSymbolConfiguration(config) }
+                ?? NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "noted")
+            image?.isTemplate = false
+            button.image = image
+            if diagStateChanged { // DIAG: log image details only on transition into recording state
+                appendMenuLog("diag_icon_set symbol=circle.fill template=\(image?.isTemplate ?? true)") // DIAG:
+            }
         } else {
-            button.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "noted")
-            button.image?.isTemplate = true
+            let image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "noted")
+            image?.isTemplate = true
+            button.image = image
         }
     }
 
@@ -92,6 +108,12 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         runtimePollTimer?.invalidate()
         let timer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
+                // DIAG: sample every 30 fires (~1 min) to confirm the poll timer is alive
+                self?.diagTimerFireCount += 1
+                let count = self?.diagTimerFireCount ?? 0
+                if count == 1 || count % 30 == 0 {
+                    self?.appendMenuLog("diag_poll_timer count=\(count)")
+                }
                 self?.updateIcon()
             }
         }
