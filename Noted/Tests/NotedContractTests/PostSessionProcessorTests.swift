@@ -180,6 +180,25 @@ final class PostSessionProcessorTests: XCTestCase {
         XCTAssertEqual(configs[1].clustering.maxSpeakers, 3)
     }
 
+    func testSpeakerCountHintOneDoesNotCapMaxSpeakers() async throws {
+        let recorder = DiarizationConfigRecorder()
+        let runner = MockDiarizationRunner(
+            recorder: recorder,
+            outputs: [
+                [DiarizationSegment(speakerId: "a", startTime: 0, endTime: 1)],
+            ]
+        )
+
+        _ = try await HintRetryingDiarizer(runner: runner).diarize(
+            audioURL: URL(fileURLWithPath: "/tmp/mock.wav"),
+            speakerCountHint: 1
+        )
+
+        let configs = recorder.configs()
+        XCTAssertEqual(configs.count, 1, "hint=1 must not trigger a retry")
+        XCTAssertNil(configs[0].clustering.maxSpeakers, "hint=1 must not cap maxSpeakers — count is a hint, not a constraint")
+    }
+
     private func makeSessionFixture(audioDuration: Double) throws -> SessionFixture {
         try makeSessionFixture(audioStrategy: "room_mic", micAudioDuration: audioDuration, systemAudioDuration: nil)
     }

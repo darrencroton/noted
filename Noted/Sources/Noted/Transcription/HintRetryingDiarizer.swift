@@ -29,7 +29,8 @@ struct HintRetryingDiarizer<Runner: OfflineDiarizationRunning>: Sendable {
 
     func diarize(audioURL: URL, speakerCountHint: Int?) async throws -> [DiarizationSegment] {
         var firstConfig = OfflineDiarizerConfig.default
-        if let speakerCountHint, speakerCountHint > 0 {
+        // hint = 1 must not cap the model at 1 speaker — per Guardrail §7, count hints are not constraints.
+        if let speakerCountHint, speakerCountHint > 1 {
             firstConfig.clustering.maxSpeakers = speakerCountHint
         }
 
