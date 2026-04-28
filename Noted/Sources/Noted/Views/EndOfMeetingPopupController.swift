@@ -10,11 +10,10 @@ final class EndOfMeetingPopupController {
     private var popupWindow: NSPanel?
     private var popupDelegate: PopupCloseDelegate?
     private var currentPromptSessionDir: URL?
-    private var diagCheckCount = 0 // DIAG:
 
     func start() {
         pollTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in self?.checkForPrompt() }
+            MainActor.assumeIsolated { [weak self] in self?.checkForPrompt() }
         }
     }
 
@@ -27,12 +26,6 @@ final class EndOfMeetingPopupController {
     // MARK: - Prompt detection
 
     private func checkForPrompt() {
-        // DIAG: sample-log every 12 checks (~60 s) to confirm the poll timer is alive
-        diagCheckCount += 1
-        if diagCheckCount == 1 || diagCheckCount % 12 == 0 {
-            appendDiagLog("diag_popup_alive count=\(diagCheckCount) has_active=\(RuntimeFiles.readActiveCapture() != nil)")
-        }
-
         guard let active = RuntimeFiles.readActiveCapture() else {
             dismissPopup()
             return
@@ -52,7 +45,6 @@ final class EndOfMeetingPopupController {
         guard let promptData = try? Data(contentsOf: promptURL),
               let promptInfo = try? JSONSerialization.jsonObject(with: promptData) as? [String: Any]
         else {
-            appendDiagLog("diag_popup_bad_prompt_data") // DIAG:
             return
         }
         let isFollowUp = promptInfo["is_follow_up"] as? Bool ?? false
@@ -61,11 +53,9 @@ final class EndOfMeetingPopupController {
         guard let manifestData = try? Data(contentsOf: manifestURL),
               let manifest = ManifestValidator.validate(data: manifestData).manifest
         else {
-            appendDiagLog("diag_popup_manifest_invalid session_dir=\(active.sessionDir)") // DIAG:
             return
         }
 
-        appendDiagLog("diag_popup_calling_show session_id=\(active.sessionID)") // DIAG:
         showPopup(sessionID: active.sessionID, sessionDir: sessionDir, manifest: manifest, isFollowUp: isFollowUp)
     }
 
@@ -121,7 +111,6 @@ final class EndOfMeetingPopupController {
         NSApp.activate(ignoringOtherApps: true)
         panel.orderFrontRegardless()
         popupWindow = panel
-        appendDiagLog("diag_popup_panel_shown session_id=\(sessionID) isFollowUp=\(isFollowUp)") // DIAG:
     }
 
     private func dismissPopup() {
@@ -137,19 +126,6 @@ final class EndOfMeetingPopupController {
         currentPromptSessionDir = nil
         popupWindow = nil
         popupDelegate = nil
-    }
-
-    // DIAG: diagnostic log helper - delete this function and all callers marked DIAG: when bug is resolved
-    private func appendDiagLog(_ message: String) {
-        let logURL = RuntimeFiles.runtimeDirectory.appendingPathComponent("popup-diag.log")
-        let line = "[\(ISO8601.withOffset(Date()))] \(message)\n"
-        if !FileManager.default.fileExists(atPath: logURL.path) {
-            FileManager.default.createFile(atPath: logURL.path, contents: nil)
-        }
-        guard let handle = try? FileHandle(forWritingTo: logURL) else { return }
-        defer { try? handle.close() }
-        handle.seekToEndOfFile()
-        try? handle.write(contentsOf: Data(line.utf8))
     }
 
     // MARK: - CLI invocation
