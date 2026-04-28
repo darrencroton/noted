@@ -30,21 +30,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     private func buildMenuItems(into menu: NSMenu) {
-        let bridgedStatus = currentRuntimeSessionStatus()?.status
-
         let title = NSMenuItem(title: "noted", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
 
-        let statusTitle = bridgedStatus?.status ?? "idle"
-        let state = NSMenuItem(title: "Status: \(statusTitle)", action: nil, keyEquivalent: "")
+        let state = NSMenuItem(title: isRecording ? "Status: recording" : "Status: ready", action: nil, keyEquivalent: "")
         state.isEnabled = false
         menu.addItem(state)
-        if let bridgedStatus {
-            let phase = NSMenuItem(title: "Phase: \(bridgedStatus.phase)", action: nil, keyEquivalent: "")
-            phase.isEnabled = false
-            menu.addItem(phase)
-        }
         menu.addItem(.separator())
 
         let activeCapture = RuntimeFiles.readLiveActiveCapture()
@@ -74,17 +66,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         return item
     }
 
+    // Returns true when an active capture is registered and no stop is in flight.
+    // stopProcess being non-nil means Stop was just triggered; treat as not-recording
+    // immediately so the icon reverts the instant the user clicks Stop, regardless of
+    // when active-capture.json is cleaned up by the session runner.
+    private var isRecording: Bool {
+        stopProcess == nil &&
+        (adHocStartProcess?.isRunning == true || RuntimeFiles.readLiveActiveCapture() != nil)
+    }
+
     private func updateIcon() {
         guard let button = statusItem?.button else { return }
-        // While a stop command is in flight, treat as not-recording immediately so the
-        // icon reverts the instant the user clicks Stop regardless of file cleanup timing.
-        let isRecording: Bool
-        if stopProcess != nil {
-            isRecording = false
-        } else {
-            isRecording = adHocStartProcess?.isRunning == true
-                || RuntimeFiles.readLiveActiveCapture() != nil
-        }
         if isRecording {
             let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
             button.image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "noted")?
@@ -94,22 +86,6 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             button.image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "noted")
             button.image?.isTemplate = true
         }
-    }
-
-    private func currentRuntimeSessionStatus() -> RuntimeSessionStatus? {
-        if let active = RuntimeFiles.readLiveActiveCapture() {
-            let sessionDir = URL(fileURLWithPath: active.sessionDir, isDirectory: true)
-            if let status = RuntimeFiles.readStatus(sessionDir: sessionDir) {
-                return RuntimeSessionStatus(status: status, sessionDir: sessionDir)
-            }
-        }
-        if let latest = RuntimeFiles.latestRegistryRecord() {
-            let sessionDir = URL(fileURLWithPath: latest.sessionDir, isDirectory: true)
-            if let status = RuntimeFiles.readStatus(sessionDir: sessionDir) {
-                return RuntimeSessionStatus(status: status, sessionDir: sessionDir)
-            }
-        }
-        return nil
     }
 
     private func startRuntimePolling() {
@@ -319,7 +295,3 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 }
 
-private struct RuntimeSessionStatus {
-    let status: RuntimeStatus
-    let sessionDir: URL
-}

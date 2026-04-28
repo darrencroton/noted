@@ -43,7 +43,6 @@ final class TranscriptionEngine {
     private(set) var downloadingModel: TranscriptionModel?
     var assetStatus = "Ready"
     var lastError: String?
-    private(set) var isSpeechDetected = false
 
     private let systemCapture = SystemAudioCapture()
     private let micCapture = MicCapture()
@@ -199,7 +198,6 @@ final class TranscriptionEngine {
         micCapture.stop()
         currentMicDeviceID = 0
         currentRawMicrophoneAudioURL = nil
-        isSpeechDetected = false
         isRunning = false
         assetStatus = "Ready"
         return systemAudioURL

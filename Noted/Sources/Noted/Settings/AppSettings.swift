@@ -1,5 +1,4 @@
 import AppKit
-import CoreAudio
 import Foundation
 import Observation
 
@@ -7,10 +6,6 @@ import Observation
 @MainActor
 final class AppSettings {
     var transcriptionLocale: String {
-        didSet { saveRuntimeSettings() }
-    }
-
-    var inputDeviceID: AudioDeviceID {
         didSet { saveRuntimeSettings() }
     }
 
@@ -22,25 +17,17 @@ final class AppSettings {
         didSet { saveRuntimeSettings() }
     }
 
-    var sysVadThreshold: Double {
-        didSet { saveRuntimeSettings() }
-    }
-
     init() {
         let runtimeSettings = RuntimeSettings.load()
         transcriptionLocale = runtimeSettings.language
-        inputDeviceID = runtimeSettings.defaultInputDevice
         outputDirectoryPath = runtimeSettings.outputRoot
         transcriptionModel = runtimeSettings.transcriptionModel
-        sysVadThreshold = runtimeSettings.sysVadThreshold
     }
 
     func reset() {
         transcriptionLocale = "en-US"
-        inputDeviceID = 0
         outputDirectoryPath = RuntimeSettings.defaultOutputRoot
         transcriptionModel = .parakeet
-        sysVadThreshold = 0.92
     }
 
     func applyScreenShareVisibility() {
@@ -69,9 +56,7 @@ final class AppSettings {
     private func saveRuntimeSettings() {
         var settings = RuntimeSettings.load()
         settings.language = transcriptionLocale
-        settings.defaultInputDevice = inputDeviceID
         settings.outputRoot = outputDirectoryPath
-        settings.sysVadThreshold = sysVadThreshold
         settings.hideFromScreenShare = true
         switch transcriptionModel {
         case .parakeet:
