@@ -72,7 +72,7 @@ no_interaction_grace_minutes = 5
 Ad hoc session notes are written directly under `output_root` next to the session directories.
 WhisperKit models are cached under `~/Library/Application Support/noted/models/`.
 
-The menubar Settings window exposes the common controls: transcription model with cache status, transcript locale, input microphone, automatic `briefing` ingest on/off, and the default directory.
+The menubar Settings window exposes the common controls: transcription model with cache status, transcript locale, input microphone, scheduled calendar recording on/off, and the default directory. The scheduled recording toggle is honored by `briefing watch` when Briefing is installed.
 
 `briefing_command` is the command `noted` runs after writing `outputs/completion.json`:
 
@@ -81,6 +81,7 @@ briefing session-ingest --session-dir <session_dir>
 ```
 
 The handoff does not mutate `completion.json`. Handoff stdout and stderr are written to `logs/briefing-ingest.stdout.log` and `logs/briefing-ingest.stderr.log` inside the session directory.
+`ingest_after_completion` defaults to true and is not exposed in the settings window.
 
 `briefing` has its own separate config at `user_config/settings.toml` in the `briefing` repo.
 
