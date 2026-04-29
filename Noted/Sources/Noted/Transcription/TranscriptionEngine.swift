@@ -66,8 +66,7 @@ final class TranscriptionEngine {
     private var defaultDeviceListenerBlock: AudioObjectPropertyListenerBlock?
 
     init() {
-        let cacheDir = AsrModels.defaultCacheDirectory(for: .v3)
-        modelDownloadState = AsrModels.modelsExist(at: cacheDir, version: .v3) ? .ready : .needed
+        modelDownloadState = ModelCache.status(for: .parakeet) == .cached ? .ready : .needed
     }
 
     func setModel(_ model: TranscriptionModel) {
@@ -95,11 +94,9 @@ final class TranscriptionEngine {
     func isModelDownloaded(_ model: TranscriptionModel) -> Bool {
         switch model {
         case .parakeet:
-            let cacheDir = AsrModels.defaultCacheDirectory(for: .v3)
-            return AsrModels.modelsExist(at: cacheDir, version: .v3)
+            return ModelCache.status(for: model) == .cached
         case .whisperBase, .whisperLargeV3:
-            guard let modelID = model.whisperModelID else { return false }
-            return FileManager.default.fileExists(atPath: Self.whisperCacheURL(for: modelID).path)
+            return ModelCache.status(for: model) == .cached
         case .appleSpeech:
             return true
         }
@@ -114,7 +111,7 @@ final class TranscriptionEngine {
             downloadingModel = model
             assetStatus = "Downloading \(model.displayName)..."
             do {
-                let whisperKit = try await WhisperKit(model: modelID)
+                let whisperKit = try await makeWhisperKit(modelID: modelID)
                 if selectedModel == model {
                     whisperKitBackend = WhisperKitASRBackend(whisperKit)
                 }
@@ -138,7 +135,7 @@ final class TranscriptionEngine {
             modelDownloadState = .needed
         case .whisperBase, .whisperLargeV3:
             guard let modelID = model.whisperModelID else { return }
-            try? FileManager.default.removeItem(at: Self.whisperCacheURL(for: modelID))
+            try? FileManager.default.removeItem(at: ModelCache.whisperModelURL(for: modelID))
             if selectedModel == model { whisperKitBackend = nil }
         case .appleSpeech:
             break
@@ -229,7 +226,7 @@ final class TranscriptionEngine {
             guard let modelID = selectedModel.whisperModelID else { return nil }
             assetStatus = "Loading \(selectedModel.displayName)..."
             do {
-                let whisperKit = try await WhisperKit(model: modelID)
+                let whisperKit = try await makeWhisperKit(modelID: modelID)
                 let backend = WhisperKitASRBackend(whisperKit)
                 whisperKitBackend = backend
                 return backend
@@ -358,8 +355,16 @@ final class TranscriptionEngine {
         defaultDeviceListenerBlock = nil
     }
 
-    private static func whisperCacheURL(for modelID: String) -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Documents/huggingface/models/argmaxinc/whisperkit-coreml/\(modelID)")
+    private func makeWhisperKit(modelID: String) async throws -> WhisperKit {
+        let modelURL = ModelCache.whisperModelURL(for: modelID)
+        if FileManager.default.fileExists(atPath: modelURL.path) {
+            return try await WhisperKit(
+                model: modelID,
+                downloadBase: ModelCache.whisperDownloadBaseURL(),
+                modelFolder: modelURL.path,
+                tokenizerFolder: ModelCache.whisperDownloadBaseURL()
+            )
+        }
+        return try await WhisperKit(model: modelID, downloadBase: ModelCache.whisperDownloadBaseURL())
     }
 }

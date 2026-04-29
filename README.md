@@ -61,7 +61,6 @@ asr_backend = "fluidaudio-parakeet"
 asr_model_variant = "parakeet-v3"
 default_input_device = 0
 output_root = "/path/to/noted/sessions"
-ad_hoc_note_directory = "/path/to/ad-hoc/notes"
 briefing_command = "briefing"
 ingest_after_completion = true
 diarization_enabled = true
@@ -69,6 +68,11 @@ default_extension_minutes = 5
 pre_end_prompt_minutes = 5
 no_interaction_grace_minutes = 5
 ```
+
+Ad hoc session notes are written directly under `output_root` next to the session directories.
+WhisperKit models are cached under `~/Library/Application Support/noted/models/`.
+
+The menubar Settings window exposes the common controls: transcription model with cache status, transcript locale, input microphone, automatic `briefing` ingest on/off, and the default directory.
 
 `briefing_command` is the command `noted` runs after writing `outputs/completion.json`:
 

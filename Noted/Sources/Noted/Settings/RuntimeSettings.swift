@@ -8,7 +8,6 @@ struct RuntimeSettings: Sendable {
     var asrModelVariant: String
     var defaultInputDevice: AudioDeviceID
     var outputRoot: String
-    var adHocNoteDirectory: String
     var sysVadThreshold: Double
     var hideFromScreenShare: Bool
     var briefingCommand: String
@@ -37,7 +36,6 @@ struct RuntimeSettings: Sendable {
             asrModelVariant: "parakeet-v3",
             defaultInputDevice: 0,
             outputRoot: defaultOutputRoot,
-            adHocNoteDirectory: defaultOutputRoot + "/ad-hoc-notes",
             sysVadThreshold: 0.92,
             hideFromScreenShare: true,
             briefingCommand: "briefing",
@@ -61,7 +59,6 @@ struct RuntimeSettings: Sendable {
             asrModelVariant: values["asr_model_variant"] ?? defaults.asrModelVariant,
             defaultInputDevice: AudioDeviceID(Int(values["default_input_device"] ?? "") ?? Int(defaults.defaultInputDevice)),
             outputRoot: values["output_root"] ?? defaults.outputRoot,
-            adHocNoteDirectory: values["ad_hoc_note_directory"] ?? defaults.adHocNoteDirectory,
             sysVadThreshold: Double(values["sys_vad_threshold"] ?? "") ?? defaults.sysVadThreshold,
             hideFromScreenShare: true,
             briefingCommand: values["briefing_command"] ?? defaults.briefingCommand,
@@ -83,7 +80,6 @@ struct RuntimeSettings: Sendable {
         asr_model_variant = "\(Self.escape(asrModelVariant))"
         default_input_device = \(Int(defaultInputDevice))
         output_root = "\(Self.escape(outputRoot))"
-        ad_hoc_note_directory = "\(Self.escape(adHocNoteDirectory))"
         sys_vad_threshold = \(sysVadThreshold)
         hide_from_screen_share = \(hideFromScreenShare)
         briefing_command = "\(Self.escape(briefingCommand))"
@@ -98,10 +94,6 @@ struct RuntimeSettings: Sendable {
 
     var outputRootURL: URL {
         URL(fileURLWithPath: NSString(string: outputRoot).expandingTildeInPath, isDirectory: true)
-    }
-
-    var adHocNoteDirectoryURL: URL {
-        URL(fileURLWithPath: NSString(string: adHocNoteDirectory).expandingTildeInPath, isDirectory: true)
     }
 
     var transcriptionModel: TranscriptionModel {

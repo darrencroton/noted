@@ -68,6 +68,12 @@ Runtime registry and active-capture files:
 ~/Library/Application Support/noted/sessions/
 ```
 
+WhisperKit ASR models are cached under:
+
+```text
+~/Library/Application Support/noted/models/
+```
+
 Session artefacts are written under the manifest-provided `paths.session_dir`; no consumer should infer outcome from logs or partial files.
 
 ## Session Directory

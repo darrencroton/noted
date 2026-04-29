@@ -7,8 +7,7 @@ struct AdHocManifestWriter {
     func writeManifest() throws -> (manifest: SessionManifest, manifestURL: URL) {
         let sessionID = makeSessionID(date: now)
         let sessionDir = settings.outputRootURL.appendingPathComponent(sessionID, isDirectory: true)
-        let notePath = settings.adHocNoteDirectoryURL
-            .appendingPathComponent("\(sessionID).md", isDirectory: false)
+        let notePath = settings.outputRootURL.appendingPathComponent("\(sessionID).md", isDirectory: false)
 
         let manifest = SessionManifest(
             schemaVersion: ContractSnapshot.manifestSchemaVersion,

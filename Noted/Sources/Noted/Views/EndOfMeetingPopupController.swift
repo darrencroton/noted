@@ -165,32 +165,35 @@ struct EndOfMeetingView: View {
     let onSwitchNext: () -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .center, spacing: 10) {
             Text(isFollowUp ? "Still recording?" : "Session ending soon")
                 .font(.headline)
+                .multilineTextAlignment(.center)
 
             Text(meetingTitle)
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
+                .multilineTextAlignment(.center)
 
             TimelineView(.periodic(from: .now, by: 1)) { context in
                 let remaining = scheduledEnd.timeIntervalSince(context.date)
                 Text(remaining > 0 ? formatRemaining(remaining) : "Past scheduled end")
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(remaining <= 60 ? .red : .primary)
+                    .multilineTextAlignment(.center)
             }
 
             Divider()
 
             if isFollowUp {
-                HStack {
+                HStack(spacing: 8) {
                     Button("Still going (+\(defaultExtensionMinutes) min)") { onExtend() }
                         .buttonStyle(.bordered)
-                    Spacer()
                     Button("Stop", role: .destructive) { onStop() }
                         .buttonStyle(.bordered)
                 }
+                .frame(maxWidth: .infinity, alignment: .center)
             } else {
                 HStack(spacing: 8) {
                     Button("Stop", role: .destructive) { onStop() }
@@ -201,6 +204,7 @@ struct EndOfMeetingView: View {
                     }
                 }
                 .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
         }
         .padding(18)

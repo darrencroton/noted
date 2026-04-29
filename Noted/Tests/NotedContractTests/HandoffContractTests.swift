@@ -61,7 +61,6 @@ final class HandoffContractTests: XCTestCase {
             asrModelVariant: "parakeet-v3",
             defaultInputDevice: 0,
             outputRoot: root.appendingPathComponent("sessions", isDirectory: true).path,
-            adHocNoteDirectory: root.appendingPathComponent("notes", isDirectory: true).path,
             sysVadThreshold: 0.92,
             hideFromScreenShare: true,
             briefingCommand: "",
@@ -77,10 +76,13 @@ final class HandoffContractTests: XCTestCase {
         let manifest = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let meeting = try XCTUnwrap(manifest["meeting"] as? [String: Any])
         let hooks = try XCTUnwrap(manifest["hooks"] as? [String: Any])
+        let paths = try XCTUnwrap(manifest["paths"] as? [String: Any])
+        let notePath = try XCTUnwrap(paths["note_path"] as? String)
 
         XCTAssertTrue(isJSONNull(meeting["event_id"]))
         XCTAssertTrue(isJSONNull(meeting["scheduled_end_time"]))
         XCTAssertTrue(isJSONNull(hooks["completion_callback"]))
+        XCTAssertEqual(notePath, settings.outputRootURL.appendingPathComponent("\(written.manifest.sessionID).md").path)
     }
 
     // MARK: - Completion handoff contract
