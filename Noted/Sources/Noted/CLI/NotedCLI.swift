@@ -382,6 +382,11 @@ struct NotedCLI {
         let nextProcess = Process()
         nextProcess.executableURL = executableURL
         nextProcess.arguments = ["start", "--manifest", nextManifestPath]
+        nextProcess.environment = IntegrationProcessEnvironment.environment(
+            extraExecutableSearchPaths: IntegrationProcessEnvironment.briefingHandoffSearchPaths(
+                sessionDir: URL(fileURLWithPath: nextManifest.paths.sessionDir, isDirectory: true)
+            )
+        )
         nextProcess.standardOutput = Pipe()
         nextProcess.standardError = FileHandle.standardError
 
@@ -669,12 +674,17 @@ struct NotedCLI {
             // Validate the next manifest first; it may have been archived by `briefing watch`.
             if autoSwitchToNext, let nextPath = manifest.nextMeeting.manifestPath {
                 let nextValidation = ManifestValidator.validate(fileURL: URL(fileURLWithPath: nextPath))
-                if nextValidation.isValid {
+                if nextValidation.isValid, let nextManifest = nextValidation.manifest {
                     let executableURL = Bundle.main.executableURL
                         ?? URL(fileURLWithPath: CommandLine.arguments[0]).absoluteURL
                     let nextProcess = Process()
                     nextProcess.executableURL = executableURL
                     nextProcess.arguments = ["start", "--manifest", nextPath]
+                    nextProcess.environment = IntegrationProcessEnvironment.environment(
+                        extraExecutableSearchPaths: IntegrationProcessEnvironment.briefingHandoffSearchPaths(
+                            sessionDir: URL(fileURLWithPath: nextManifest.paths.sessionDir, isDirectory: true)
+                        )
+                    )
                     nextProcess.standardOutput = Pipe()
                     nextProcess.standardError = FileHandle.standardError
                     try? nextProcess.run()
@@ -972,6 +982,9 @@ struct NotedCLI {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = ["__run-session", "--manifest", manifestPath]
+        process.environment = IntegrationProcessEnvironment.environment(
+            extraExecutableSearchPaths: IntegrationProcessEnvironment.briefingHandoffSearchPaths(sessionDir: sessionDir)
+        )
         let logURL = sessionDir.appendingPathComponent("logs/noted.log")
         let logHandle = try FileHandle(forWritingTo: logURL)
         logHandle.seekToEndOfFile()
@@ -1016,6 +1029,9 @@ struct NotedCLI {
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
                 process.arguments = [command, "session-ingest", "--session-dir", sessionDir.path]
             }
+            process.environment = IntegrationProcessEnvironment.environment(
+                extraExecutableSearchPaths: IntegrationProcessEnvironment.briefingHandoffSearchPaths(sessionDir: sessionDir)
+            )
             process.standardOutput = stdoutHandle
             process.standardError = stderrHandle
             defer {

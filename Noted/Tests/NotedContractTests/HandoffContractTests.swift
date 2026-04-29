@@ -128,6 +128,26 @@ final class HandoffContractTests: XCTestCase {
                       "completed log must include 'exit_code=' for handoff diagnostics")
     }
 
+    func testHandoffEnvironmentIncludesBriefingRepoVirtualenvForCalendarSessions() {
+        let sessionDir = URL(fileURLWithPath: "/tmp/briefing/sessions/2026-04-29T131000+1000-meeting-test-2", isDirectory: true)
+
+        let paths = IntegrationProcessEnvironment.briefingHandoffSearchPaths(sessionDir: sessionDir)
+        let path = IntegrationProcessEnvironment.mergedPath(
+            existingPath: "/usr/bin:/bin",
+            extraPaths: paths
+        )
+
+        XCTAssertTrue(path.split(separator: ":").contains("/tmp/briefing/.venv/bin"))
+        XCTAssertTrue(path.hasPrefix("/tmp/briefing/.venv/bin:"),
+                      "session-scoped briefing executable path should take precedence over a GUI PATH")
+    }
+
+    func testHandoffEnvironmentDoesNotInferBriefingPathForNonCalendarSessions() {
+        let sessionDir = URL(fileURLWithPath: "/tmp/noted/20260429T0103449680000-ad-hoc", isDirectory: true)
+
+        XCTAssertEqual(IntegrationProcessEnvironment.briefingHandoffSearchPaths(sessionDir: sessionDir), [])
+    }
+
     // MARK: - Helpers
 
     /// Returns true if `value` is an Optional wrapping an NSNull instance.

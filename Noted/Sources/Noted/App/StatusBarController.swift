@@ -207,6 +207,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
+        process.environment = IntegrationProcessEnvironment.environment()
         process.standardOutput = logHandle
         process.standardError = logHandle
         return process
@@ -298,4 +299,3 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
     }
 }
-

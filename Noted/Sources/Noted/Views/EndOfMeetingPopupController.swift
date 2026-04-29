@@ -135,6 +135,7 @@ final class EndOfMeetingPopupController {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
+        process.environment = IntegrationProcessEnvironment.environment()
         process.standardOutput = Pipe()
         process.standardError = Pipe()
         try? process.run()
