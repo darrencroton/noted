@@ -3,8 +3,8 @@ import SwiftUI
 struct SettingsView: View {
     @Bindable var settings: AppSettings
     @State private var isShowingResetConfirmation = false
-    private let labelWidth: CGFloat = 205
-    private let controlWidth: CGFloat = 330
+    private let labelWidth: CGFloat = 240
+    private let controlWidth: CGFloat = 320
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,6 +53,22 @@ struct SettingsView: View {
                 }
 
                 GridRow {
+                    Text("Summarise Transcript With Briefing")
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                        .frame(width: labelWidth, alignment: .trailing)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Toggle("", isOn: $settings.ingestAfterCompletion)
+                            .labelsHidden()
+                        Text("Only when Briefing is installed.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(width: controlWidth, alignment: .leading)
+                }
+
+                GridRow {
                     Text("Record Scheduled Meetings")
                         .frame(width: labelWidth, alignment: .trailing)
                     VStack(alignment: .leading, spacing: 4) {
@@ -75,6 +91,7 @@ struct SettingsView: View {
                 }
             }
             .padding(.top, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 22) {
                 Button("Open Default Directory") {
@@ -90,7 +107,7 @@ struct SettingsView: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 26)
-        .frame(minWidth: 620, minHeight: 310)
+        .frame(minWidth: 650, minHeight: 310)
         .onAppear {
             settings.refreshInputDevices()
         }

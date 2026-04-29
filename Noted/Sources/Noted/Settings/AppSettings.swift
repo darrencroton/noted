@@ -27,6 +27,10 @@ final class AppSettings {
         didSet { BriefingRecordingSettings.set(enabled: recordScheduledMeetings) }
     }
 
+    var ingestAfterCompletion: Bool {
+        didSet { saveRuntimeSettings() }
+    }
+
     var transcriptionModel: TranscriptionModel {
         didSet { saveRuntimeSettings() }
     }
@@ -39,6 +43,7 @@ final class AppSettings {
         outputDirectoryPath = runtimeSettings.outputRoot
         inputDeviceID = runtimeSettings.defaultInputDevice
         recordScheduledMeetings = BriefingRecordingSettings.load()
+        ingestAfterCompletion = runtimeSettings.ingestAfterCompletion
         transcriptionModel = runtimeSettings.transcriptionModel
         inputDevices = Self.loadInputDevices(selectedDeviceID: runtimeSettings.defaultInputDevice)
     }
@@ -48,6 +53,7 @@ final class AppSettings {
         outputDirectoryPath = RuntimeSettings.defaultOutputRoot
         inputDeviceID = 0
         recordScheduledMeetings = true
+        ingestAfterCompletion = true
         transcriptionModel = .parakeet
     }
 
@@ -87,7 +93,7 @@ final class AppSettings {
         settings.language = transcriptionLocale
         settings.outputRoot = outputDirectoryPath
         settings.defaultInputDevice = inputDeviceID
-        settings.ingestAfterCompletion = true
+        settings.ingestAfterCompletion = ingestAfterCompletion
         settings.hideFromScreenShare = true
         switch transcriptionModel {
         case .parakeet:

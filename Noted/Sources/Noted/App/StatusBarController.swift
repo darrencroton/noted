@@ -34,12 +34,17 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         title.isEnabled = false
         menu.addItem(title)
 
-        let state = NSMenuItem(title: isRecording ? "Status: recording" : "Status: ready", action: nil, keyEquivalent: "")
+        let activeCapture = RuntimeFiles.readLiveActiveCapture()
+        let recording = isRecording
+        let state = NSMenuItem(title: recording ? "Status: recording" : "Status: ready", action: nil, keyEquivalent: "")
         state.isEnabled = false
         menu.addItem(state)
+        if recording, let activeCapture, let details = activeSessionDetails(activeCapture: activeCapture) {
+            addDisabledMenuItem("Meeting: \(details.title)", tooltip: details.title, to: menu)
+            addDisabledMenuItem("Note: \(details.noteDisplay)", tooltip: details.notePath, to: menu)
+        }
         menu.addItem(.separator())
 
-        let activeCapture = RuntimeFiles.readLiveActiveCapture()
         let isStarting = adHocStartProcess?.isRunning == true
         let canStart = activeCapture == nil && !isStarting
         appendMenuLog("menu_built canStart=\(canStart) activeCapture=\(activeCapture != nil) isStarting=\(isStarting) stopProcess=\(stopProcess != nil)")
@@ -64,6 +69,34 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
         item.target = self
         return item
+    }
+
+    private func addDisabledMenuItem(_ title: String, tooltip: String?, to menu: NSMenu) {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        item.toolTip = tooltip
+        menu.addItem(item)
+    }
+
+    private struct ActiveSessionDetails {
+        let title: String
+        let noteDisplay: String
+        let notePath: String
+    }
+
+    private func activeSessionDetails(activeCapture: ActiveCaptureRecord) -> ActiveSessionDetails? {
+        let sessionDir = URL(fileURLWithPath: activeCapture.sessionDir, isDirectory: true)
+        let manifestURL = sessionDir.appendingPathComponent("manifest.json")
+        guard let manifest = ManifestValidator.validate(fileURL: manifestURL).manifest else {
+            return nil
+        }
+        let noteURL = URL(fileURLWithPath: manifest.paths.notePath)
+        let noteDisplay = noteURL.lastPathComponent.isEmpty ? manifest.paths.notePath : noteURL.lastPathComponent
+        return ActiveSessionDetails(
+            title: manifest.meeting.title.isEmpty ? activeCapture.sessionID : manifest.meeting.title,
+            noteDisplay: noteDisplay,
+            notePath: manifest.paths.notePath
+        )
     }
 
     // Returns true when an active capture is registered and no stop is in flight.
@@ -248,7 +281,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     @objc private func showSettings(_ sender: NSMenuItem) {
         guard let settings else { return }
         let view = SettingsView(settings: settings)
-        settingsWindow = showWindow(settingsWindow, title: "noted Settings", rootView: view, size: NSSize(width: 540, height: 190))
+        settingsWindow = showWindow(settingsWindow, title: "noted Settings", rootView: view, size: NSSize(width: 660, height: 360))
     }
 
     private func showWindow<V: View>(_ existing: NSWindow?, title: String, rootView: V, size: NSSize) -> NSWindow {
