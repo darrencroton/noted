@@ -21,7 +21,7 @@ final class FixtureContractTests: XCTestCase {
         let tagURL = contractsSnapshotRoot.appendingPathComponent("CONTRACTS_TAG")
         let tag = try String(contentsOf: tagURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
 
-        XCTAssertEqual(tag, "v1.0.1")
+        XCTAssertEqual(tag, "v1.0.2")
     }
 
     func testValidManifestFixturesContainInputsNotedRequiresToStartCapture() throws {
