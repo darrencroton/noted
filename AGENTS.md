@@ -10,15 +10,15 @@ This file provides guidance when working in this repository.
 
 ## Commands
 
-Run commands from the repo root unless noted otherwise.
+Run commands from the repo root unless otherwise noted.
 
 ```bash
-cd Noted && swift build
-cd Noted && swift test
-./scripts/release.sh test
-./scripts/contract-smoke.sh
-./scripts/bump_version.sh patch
-defaults delete app.noted.macos
+cd Noted && swift build           # debug build; output at Noted/.build/
+cd Noted && swift test            # contract test suite (Tests/NotedContractTests/)
+./scripts/release.sh test         # local app-bundle build, skips notarization
+./scripts/contract-smoke.sh       # end-to-end smoke: start, status, stop, wait
+./scripts/bump_version.sh patch   # bump Info.plist version (or minor|major|X.Y.Z)
+defaults delete app.noted.macos   # reset persisted app preferences (use when testing)
 ```
 
 The app bundle build writes `dist/Noted.app`. For local integration with `briefing`, symlink `dist/Noted.app/Contents/MacOS/Noted` to a `noted` command on `PATH`.

@@ -1,8 +1,10 @@
 # Changelog
 
-## Unreleased
+## [0.2.0] - 2026-04-30
 
-- Added pause/continue recording controls through the CLI and menubar. Paused sessions stay active and continue to report `status: "recording"` with `is_paused: true` in runtime status.
+- Added `noted pause --session-id <id>` and `noted continue --session-id <id>` CLI commands and matching menubar controls.
+- Paused sessions remain `status: "recording"` and report `is_paused: true` in `runtime/status.json`; no new locked runtime status value is added.
+- Pinned contracts v1.0.2, which adds the optional `is_paused` property to `runtime-status.v1.json` and optional `meeting.location_type` to `manifest.v1.json`.
 
 ## [0.1.0] - 2026-04-25
 
