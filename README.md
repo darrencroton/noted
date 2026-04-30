@@ -92,6 +92,8 @@ All CLI commands write one JSON line to stdout and diagnostics to stderr. Exit c
 ```bash
 noted validate-manifest --manifest /path/to/manifest.json
 noted start --manifest /path/to/manifest.json
+noted pause --session-id <session-id>
+noted continue --session-id <session-id>
 noted stop --session-id <session-id>
 noted extend --session-id <session-id> --minutes 10
 noted switch-next --session-id <session-id>
@@ -101,12 +103,14 @@ noted version
 ```
 
 `noted stop` returns after capture is flushed and persisted. ASR, diarization, completion writing, and optional `briefing` ingest continue asynchronously.
+`noted pause` and `noted continue` keep the session active while excluding paused audio from the raw recording. `status.json` remains `status: "recording"` and carries `is_paused` so existing status readers do not need a new runtime vocabulary value.
 
 ## Menubar App
 
 The menubar app exposes the same runtime paths as the CLI:
 
 - Start creates a full ad hoc manifest from local settings and records immediately.
+- Pause temporarily suspends audio capture for the active session; while paused this menu item changes to Continue.
 - Stop requests a fast stop for the active session.
 - Status reflects `runtime/status.json`.
 - The scheduled end-of-meeting popup offers Stop, Extend, and Next Meeting when the manifest allows those actions.

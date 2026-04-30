@@ -46,6 +46,8 @@ Local runtime settings live at `~/Library/Application Support/noted/settings.tom
 
 ```text
 noted start             --manifest <path>
+noted pause             --session-id <id>
+noted continue          --session-id <id>
 noted stop              --session-id <id>
 noted extend            --session-id <id> --minutes N
 noted switch-next       --session-id <id>

@@ -63,6 +63,7 @@ final class TranscriptionEngine {
     private var currentMicDeviceID: AudioDeviceID = 0
     private var userSelectedDeviceID: AudioDeviceID = 0
     private var currentRawMicrophoneAudioURL: URL?
+    private var isCapturePaused = false
     private var defaultDeviceListenerBlock: AudioObjectPropertyListenerBlock?
 
     init() {
@@ -194,9 +195,33 @@ final class TranscriptionEngine {
         micCapture.stop()
         currentMicDeviceID = 0
         currentRawMicrophoneAudioURL = nil
+        isCapturePaused = false
         isRunning = false
         assetStatus = "Ready"
         return systemAudioURL
+    }
+
+    func pauseCapture() {
+        guard isRunning else { return }
+        isCapturePaused = true
+        micCapture.pause()
+        systemCapture.pause()
+        assetStatus = "Paused"
+    }
+
+    func resumeCapture() throws {
+        guard isRunning else { return }
+        do {
+            try micCapture.resume()
+            systemCapture.resume()
+            isCapturePaused = false
+            assetStatus = "Recording"
+        } catch {
+            systemCapture.pause()
+            isCapturePaused = true
+            assetStatus = "Paused"
+            throw error
+        }
     }
 
     func diarizeAudio(audioURL: URL, speakerCountHint: Int?) async -> [DiarizationSegment]? {
@@ -313,6 +338,9 @@ final class TranscriptionEngine {
         let stream = micCapture.bufferStream(deviceID: targetMicID, rawAudioURL: currentRawMicrophoneAudioURL)
         micTask = Task.detached {
             for await _ in stream {}
+        }
+        if isCapturePaused {
+            micCapture.pause()
         }
     }
 

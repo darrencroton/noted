@@ -1,6 +1,79 @@
 import AppKit
 import Foundation
 
+enum PauseStateRequestApplier {
+    static func apply(
+        sessionID: String,
+        sessionDir: URL,
+        startedAt: String?,
+        scheduledEndTime: String?,
+        currentExtensionMinutes: Int,
+        preEndPromptShown: Bool,
+        inMemoryIsPaused: inout Bool,
+        pauseCapture: () -> Void,
+        resumeCapture: () throws -> Void,
+        log: (String) -> Void
+    ) {
+        guard let requestedPauseState = RuntimeFiles.readRequestedPauseState(sessionDir: sessionDir) else {
+            return
+        }
+        defer { RuntimeFiles.clearPauseStateRequest(sessionDir: sessionDir) }
+
+        guard requestedPauseState != inMemoryIsPaused else {
+            return
+        }
+
+        if requestedPauseState {
+            pauseCapture()
+            inMemoryIsPaused = true
+            try? RuntimeFiles.writeStatus(
+                sessionID: sessionID,
+                sessionDir: sessionDir,
+                status: "recording",
+                phase: "capturing",
+                startedAt: startedAt,
+                scheduledEndTime: scheduledEndTime,
+                currentExtensionMinutes: currentExtensionMinutes,
+                preEndPromptShown: preEndPromptShown,
+                isPaused: true
+            )
+            log("capture paused")
+            return
+        }
+
+        do {
+            try resumeCapture()
+            inMemoryIsPaused = false
+            try? RuntimeFiles.writeStatus(
+                sessionID: sessionID,
+                sessionDir: sessionDir,
+                status: "recording",
+                phase: "capturing",
+                startedAt: startedAt,
+                scheduledEndTime: scheduledEndTime,
+                currentExtensionMinutes: currentExtensionMinutes,
+                preEndPromptShown: preEndPromptShown,
+                isPaused: false
+            )
+            log("capture continued")
+        } catch {
+            try? RuntimeFiles.writeStatus(
+                sessionID: sessionID,
+                sessionDir: sessionDir,
+                status: "recording",
+                phase: "capturing",
+                startedAt: startedAt,
+                scheduledEndTime: scheduledEndTime,
+                currentExtensionMinutes: currentExtensionMinutes,
+                preEndPromptShown: preEndPromptShown,
+                isPaused: true,
+                lastError: "continue_failed: \(error.localizedDescription)"
+            )
+            log("capture continue failed: \(error.localizedDescription)")
+        }
+    }
+}
+
 struct NotedCLI {
     func run(arguments: [String]) async -> Int {
         guard let command = arguments.first else {
@@ -19,6 +92,10 @@ struct NotedCLI {
             return await start(options: options)
         case "stop":
             return stop(options: options)
+        case "pause":
+            return pause(options: options)
+        case "continue":
+            return continueRecording(options: options)
         case "status":
             return status(options: options)
         case "extend":
@@ -209,6 +286,99 @@ struct NotedCLI {
         }
     }
 
+    private func pause(options: [String: String]) -> Int {
+        setPaused(options: options, paused: true)
+    }
+
+    private func continueRecording(options: [String: String]) -> Int {
+        setPaused(options: options, paused: false)
+    }
+
+    private func setPaused(options: [String: String], paused: Bool) -> Int {
+        guard let sessionID = options["session-id"] else {
+            writeError("missing --session-id <id>")
+            writeJSON(["ok": false, "error": "missing_session_id"])
+            return 2
+        }
+
+        guard let record = RuntimeFiles.readRegistry(sessionID: sessionID) else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "unknown_session_id"])
+            return 2
+        }
+
+        let sessionDir = URL(fileURLWithPath: record.sessionDir, isDirectory: true)
+        guard let currentStatus = RuntimeFiles.readStatus(sessionDir: sessionDir) else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "unknown_session_id"])
+            return 2
+        }
+        guard currentStatus.status == "recording" else {
+            writeJSON(["ok": false, "session_id": sessionID, "error": "session_not_recording"])
+            return 3
+        }
+        if currentStatus.isPaused == paused {
+            writeJSON([
+                "ok": true,
+                "session_id": sessionID,
+                "status": "recording",
+                "is_paused": paused,
+            ])
+            return 0
+        }
+
+        do {
+            try RuntimeFiles.writeStatus(
+                sessionID: sessionID,
+                sessionDir: sessionDir,
+                status: currentStatus.status,
+                phase: currentStatus.phase,
+                startedAt: currentStatus.startedAt,
+                scheduledEndTime: currentStatus.scheduledEndTime,
+                currentExtensionMinutes: currentStatus.currentExtensionMinutes,
+                preEndPromptShown: currentStatus.preEndPromptShown,
+                isPaused: currentStatus.isPaused
+            )
+            try RuntimeFiles.writePauseStateRequest(sessionDir: sessionDir, paused: paused)
+            let deadline = Date().addingTimeInterval(5)
+            while Date() < deadline {
+                if let status = RuntimeFiles.readStatus(sessionDir: sessionDir) {
+                    if status.status != "recording" {
+                        writeJSON(["ok": false, "session_id": sessionID, "error": "session_not_recording"])
+                        return 3
+                    }
+                    if !paused, let lastError = status.lastError, lastError.hasPrefix("continue_failed:") {
+                        writeJSON(["ok": false, "session_id": sessionID, "error": "continue_failed"])
+                        return 4
+                    }
+                    if status.isPaused == paused {
+                        writeJSON([
+                            "ok": true,
+                            "session_id": sessionID,
+                            "status": "recording",
+                            "is_paused": paused,
+                        ])
+                        return 0
+                    }
+                }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+
+            writeJSON([
+                "ok": false,
+                "session_id": sessionID,
+                "error": paused ? "pause_timeout" : "continue_timeout",
+            ])
+            return 4
+        } catch {
+            writeError(error.localizedDescription)
+            writeJSON([
+                "ok": false,
+                "session_id": sessionID,
+                "error": paused ? "pause_failed" : "continue_failed",
+            ])
+            return 4
+        }
+    }
+
     private func extend(options: [String: String]) -> Int {
         guard let sessionID = options["session-id"] else {
             writeError("missing --session-id <id>")
@@ -256,7 +426,8 @@ struct NotedCLI {
                 startedAt: currentStatus.startedAt,
                 scheduledEndTime: newEndTimeStr,
                 currentExtensionMinutes: totalExtension,
-                preEndPromptShown: currentStatus.preEndPromptShown
+                preEndPromptShown: currentStatus.preEndPromptShown,
+                isPaused: currentStatus.isPaused
             )
 
             // Clearing the prompt file causes the session runner to re-fire it at the new time.
@@ -435,6 +606,7 @@ struct NotedCLI {
             "session_id": status.sessionID,
             "status": status.status,
             "phase": status.phase,
+            "is_paused": status.isPaused,
             "started_at": status.startedAt as Any,
             "scheduled_end_time": status.scheduledEndTime as Any,
             "current_extension_minutes": status.currentExtensionMinutes,
@@ -554,6 +726,7 @@ struct NotedCLI {
             var inMemoryScheduledEndTime = manifest.meeting.scheduledEndTime
             var inMemoryExtensionMinutes = 0
             var inMemoryPreEndPromptShown = false
+            var inMemoryIsPaused = false
 
             try RuntimeFiles.writeStatus(
                 sessionID: manifest.sessionID,
@@ -578,6 +751,21 @@ struct NotedCLI {
                 if let freshStatus = RuntimeFiles.readStatus(sessionDir: sessionDir) {
                     inMemoryScheduledEndTime = freshStatus.scheduledEndTime
                     inMemoryExtensionMinutes = freshStatus.currentExtensionMinutes
+                }
+
+                if FileManager.default.fileExists(atPath: RuntimeFiles.pauseStateRequestURL(sessionDir: sessionDir).path) {
+                    PauseStateRequestApplier.apply(
+                        sessionID: manifest.sessionID,
+                        sessionDir: sessionDir,
+                        startedAt: startedAtString,
+                        scheduledEndTime: inMemoryScheduledEndTime,
+                        currentExtensionMinutes: inMemoryExtensionMinutes,
+                        preEndPromptShown: inMemoryPreEndPromptShown,
+                        inMemoryIsPaused: &inMemoryIsPaused,
+                        pauseCapture: { transcriptionEngine.pauseCapture() },
+                        resumeCapture: { try transcriptionEngine.resumeCapture() },
+                        log: { appendLog(sessionDir: sessionDir, $0) }
+                    )
                 }
 
                 // `noted extend` clears pre-end-prompt.json so the prompt re-fires at the new time.
@@ -608,7 +796,8 @@ struct NotedCLI {
                             startedAt: startedAtString,
                             scheduledEndTime: inMemoryScheduledEndTime,
                             currentExtensionMinutes: inMemoryExtensionMinutes,
-                            preEndPromptShown: true
+                            preEndPromptShown: true,
+                            isPaused: inMemoryIsPaused
                         )
                         var uiState = RuntimeFiles.readUIState(sessionDir: sessionDir) ?? UIState()
                         if uiState.promptShownAt == nil { uiState.promptShownAt = ISO8601.withOffset(now) }
@@ -650,7 +839,8 @@ struct NotedCLI {
                 startedAt: startedAtString,
                 scheduledEndTime: inMemoryScheduledEndTime,
                 currentExtensionMinutes: inMemoryExtensionMinutes,
-                preEndPromptShown: inMemoryPreEndPromptShown
+                preEndPromptShown: inMemoryPreEndPromptShown,
+                isPaused: false
             )
             _ = await transcriptionEngine.stop()
             fsyncIfPossible(descriptor.microphoneAudioURL)

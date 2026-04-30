@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Added pause/continue recording controls through the CLI and menubar. Paused sessions stay active and continue to report `status: "recording"` with `is_paused: true` in runtime status.
+
 ## [0.1.0] - 2026-04-25
 
 Initial `noted` release candidate for the Meeting Intelligence System.

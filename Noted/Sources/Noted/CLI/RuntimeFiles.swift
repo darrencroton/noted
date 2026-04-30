@@ -36,6 +36,7 @@ struct RuntimeStatus: Codable, Sendable {
     var scheduledEndTime: String?
     var currentExtensionMinutes: Int
     var preEndPromptShown: Bool
+    var isPaused: Bool
     var lastError: String?
 
     enum CodingKeys: String, CodingKey {
@@ -47,7 +48,46 @@ struct RuntimeStatus: Codable, Sendable {
         case scheduledEndTime = "scheduled_end_time"
         case currentExtensionMinutes = "current_extension_minutes"
         case preEndPromptShown = "pre_end_prompt_shown"
+        case isPaused = "is_paused"
         case lastError = "last_error"
+    }
+
+    init(
+        sessionID: String,
+        status: String,
+        phase: String,
+        startedAt: String?,
+        updatedAt: String,
+        scheduledEndTime: String?,
+        currentExtensionMinutes: Int,
+        preEndPromptShown: Bool,
+        isPaused: Bool = false,
+        lastError: String?
+    ) {
+        self.sessionID = sessionID
+        self.status = status
+        self.phase = phase
+        self.startedAt = startedAt
+        self.updatedAt = updatedAt
+        self.scheduledEndTime = scheduledEndTime
+        self.currentExtensionMinutes = currentExtensionMinutes
+        self.preEndPromptShown = preEndPromptShown
+        self.isPaused = isPaused
+        self.lastError = lastError
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionID = try container.decode(String.self, forKey: .sessionID)
+        status = try container.decode(String.self, forKey: .status)
+        phase = try container.decode(String.self, forKey: .phase)
+        startedAt = try container.decodeIfPresent(String.self, forKey: .startedAt)
+        updatedAt = try container.decode(String.self, forKey: .updatedAt)
+        scheduledEndTime = try container.decodeIfPresent(String.self, forKey: .scheduledEndTime)
+        currentExtensionMinutes = try container.decodeIfPresent(Int.self, forKey: .currentExtensionMinutes) ?? 0
+        preEndPromptShown = try container.decodeIfPresent(Bool.self, forKey: .preEndPromptShown) ?? false
+        isPaused = try container.decodeIfPresent(Bool.self, forKey: .isPaused) ?? false
+        lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
     }
 }
 
@@ -243,6 +283,10 @@ enum RuntimeFiles {
         sessionDir.appendingPathComponent("runtime/stop-request.json")
     }
 
+    static func pauseStateRequestURL(sessionDir: URL) -> URL {
+        sessionDir.appendingPathComponent("runtime/pause-state-request.json")
+    }
+
     static func captureFinalizedURL(sessionDir: URL) -> URL {
         sessionDir.appendingPathComponent("runtime/capture-finalized.json")
     }
@@ -306,6 +350,7 @@ enum RuntimeFiles {
         scheduledEndTime: String?,
         currentExtensionMinutes: Int = 0,
         preEndPromptShown: Bool = false,
+        isPaused: Bool = false,
         lastError: String? = nil
     ) throws {
         let payload = RuntimeStatus(
@@ -317,10 +362,34 @@ enum RuntimeFiles {
             scheduledEndTime: scheduledEndTime,
             currentExtensionMinutes: currentExtensionMinutes,
             preEndPromptShown: preEndPromptShown,
+            isPaused: isPaused,
             lastError: lastError
         )
         let data = try encoder.encode(payload)
         try data.write(to: statusURL(sessionDir: sessionDir), options: .atomic)
+    }
+
+    static func writePauseStateRequest(sessionDir: URL, paused: Bool) throws {
+        let payload: [String: Any] = [
+            "is_paused": paused,
+            "requested_at": ISO8601.withOffset(Date()),
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: pauseStateRequestURL(sessionDir: sessionDir), options: .atomic)
+    }
+
+    static func readRequestedPauseState(sessionDir: URL) -> Bool? {
+        guard let data = try? Data(contentsOf: pauseStateRequestURL(sessionDir: sessionDir)),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let paused = object["is_paused"] as? Bool
+        else {
+            return nil
+        }
+        return paused
+    }
+
+    static func clearPauseStateRequest(sessionDir: URL) {
+        try? FileManager.default.removeItem(at: pauseStateRequestURL(sessionDir: sessionDir))
     }
 
     static func writeStopRequest(sessionDir: URL, reason: String = "manual_stop") throws {

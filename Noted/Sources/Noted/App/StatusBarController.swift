@@ -10,6 +10,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private var runtimePollTimer: Timer?
     private var adHocStartProcess: Process?
     private var stopProcess: Process?
+    private var captureControlProcess: Process?
+    private var optimisticPauseTarget: OptimisticPauseTarget?
+
+    private struct OptimisticPauseTarget {
+        let sessionID: String
+        let isPaused: Bool
+    }
 
     func setup(settings: AppSettings) {
         guard statusItem == nil else { return }
@@ -36,7 +43,11 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         let activeCapture = RuntimeFiles.readLiveActiveCapture()
         let recording = isRecording
-        let state = NSMenuItem(title: recording ? "Status: recording" : "Status: ready", action: nil, keyEquivalent: "")
+        let activeStatus = activeCapture.flatMap { readActiveStatus(activeCapture: $0) }
+        let paused = displayedPauseState(activeCapture: activeCapture, activeStatus: activeStatus)
+        let statusText = paused ? "paused" : (activeStatus?.status ?? "recording")
+        let stateTitle = recording ? "Status: \(statusText)" : "Status: ready"
+        let state = NSMenuItem(title: stateTitle, action: nil, keyEquivalent: "")
         state.isEnabled = false
         menu.addItem(state)
         if recording, let activeCapture, let details = activeSessionDetails(activeCapture: activeCapture) {
@@ -47,11 +58,14 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         let isStarting = adHocStartProcess?.isRunning == true
         let canStart = activeCapture == nil && !isStarting
-        appendMenuLog("menu_built canStart=\(canStart) activeCapture=\(activeCapture != nil) isStarting=\(isStarting) stopProcess=\(stopProcess != nil)")
+        appendMenuLog("menu_built canStart=\(canStart) activeCapture=\(activeCapture != nil) isStarting=\(isStarting) stopProcess=\(stopProcess != nil) paused=\(paused)")
 
         if canStart {
             menu.addItem(makeItem("Start Ad Hoc Session", action: #selector(startRecording(_:))))
         } else if activeCapture != nil {
+            if activeStatus?.status == "recording" {
+                menu.addItem(makeItem(paused ? "Continue Recording" : "Pause Recording", action: #selector(togglePauseActiveCapture(_:))))
+            }
             menu.addItem(makeItem("Stop Recording", action: #selector(stopActiveCapture(_:))))
         }
 
@@ -99,6 +113,15 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         )
     }
 
+    private func isPaused(activeCapture: ActiveCaptureRecord) -> Bool {
+        readActiveStatus(activeCapture: activeCapture)?.isPaused == true
+    }
+
+    private func readActiveStatus(activeCapture: ActiveCaptureRecord) -> RuntimeStatus? {
+        let sessionDir = URL(fileURLWithPath: activeCapture.sessionDir, isDirectory: true)
+        return RuntimeFiles.readStatus(sessionDir: sessionDir)
+    }
+
     // Returns true when an active capture is registered and no stop is in flight.
     // stopProcess being non-nil means Stop was just triggered; treat as not-recording
     // immediately so the icon reverts the instant the user clicks Stop, regardless of
@@ -111,18 +134,50 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     private func updateIcon() {
         guard let button = statusItem?.button else { return }
         if isRecording {
-            let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
-            // isTemplate must be set before assignment; mutating button.image after assignment does not trigger re-render.
-            let image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "noted")
-                .flatMap { $0.withSymbolConfiguration(config) }
-                ?? NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "noted")
-            image?.isTemplate = false
-            button.image = image
+            let activeCapture = RuntimeFiles.readLiveActiveCapture()
+            let activeStatus = activeCapture.flatMap { readActiveStatus(activeCapture: $0) }
+            let paused = displayedPauseState(activeCapture: activeCapture, activeStatus: activeStatus)
+            if paused {
+                button.image = makePauseButtonImage()
+            } else {
+                let config = NSImage.SymbolConfiguration(paletteColors: [.systemRed])
+                // isTemplate must be set before assignment; mutating button.image after assignment does not trigger re-render.
+                let image = NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "noted")
+                    .flatMap { $0.withSymbolConfiguration(config) }
+                    ?? NSImage(systemSymbolName: "circle.fill", accessibilityDescription: "noted")
+                image?.isTemplate = false
+                button.image = image
+            }
         } else {
             let image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "noted")
             image?.isTemplate = true
             button.image = image
         }
+    }
+
+    private func makePauseButtonImage() -> NSImage {
+        let image = NSImage(size: NSSize(width: 18, height: 18))
+        image.lockFocus()
+        defer { image.unlockFocus() }
+
+        NSColor.white.setFill()
+
+        let leftBar = NSBezierPath(roundedRect: NSRect(x: 4.2, y: 2.6, width: 4.0, height: 12.8), xRadius: 0.9, yRadius: 0.9)
+        let rightBar = NSBezierPath(roundedRect: NSRect(x: 9.8, y: 2.6, width: 4.0, height: 12.8), xRadius: 0.9, yRadius: 0.9)
+        leftBar.fill()
+        rightBar.fill()
+
+        image.isTemplate = false
+        image.accessibilityDescription = "noted paused"
+        return image
+    }
+
+    private func displayedPauseState(activeCapture: ActiveCaptureRecord?, activeStatus: RuntimeStatus?) -> Bool {
+        guard let activeCapture else { return false }
+        if optimisticPauseTarget?.sessionID != activeCapture.sessionID {
+            optimisticPauseTarget = nil
+        }
+        return optimisticPauseTarget?.isPaused ?? (activeStatus?.isPaused == true)
     }
 
     private func startRuntimePolling() {
@@ -147,6 +202,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         }
 
         do {
+            optimisticPauseTarget = nil
             let settings = RuntimeSettings.load()
             let writer = AdHocManifestWriter(settings: settings)
             let written = try writer.writeManifest()
@@ -172,13 +228,62 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             }
             adHocStartProcess = process
             stopProcess = nil  // a new session takes ownership; prior stop is no longer relevant
+            optimisticPauseTarget = nil
             try process.run()
             updateIcon()
         } catch {
             adHocStartProcess = nil
+            optimisticPauseTarget = nil
             appendMenuLog("start_ad_hoc_failed error=\(error.localizedDescription)")
             NSSound.beep()
             showAdHocStartFailure(message: error.localizedDescription)
+        }
+    }
+
+    @objc private func togglePauseActiveCapture(_ sender: NSMenuItem) {
+        guard captureControlProcess?.isRunning != true else {
+            appendMenuLog("pause_toggle_ignored control_process_in_flight")
+            return
+        }
+        guard let active = RuntimeFiles.readLiveActiveCapture() else {
+            appendMenuLog("pause_toggle_ignored no_active_capture")
+            NSSound.beep()
+            updateIcon()
+            return
+        }
+
+        let paused = isPaused(activeCapture: active)
+        let command = paused ? "continue" : "pause"
+        appendMenuLog("\(command)_recording_clicked session_id=\(active.sessionID)")
+
+        do {
+            let process = try makeLoggedCLIProcess(
+                arguments: [command, "--session-id", active.sessionID],
+                logName: "menu-\(command).log"
+            )
+            process.terminationHandler = { [weak self] terminatedProcess in
+                DispatchQueue.main.async { [weak self] in
+                    if self?.captureControlProcess === terminatedProcess {
+                        self?.captureControlProcess = nil
+                    }
+                    if self?.optimisticPauseTarget?.sessionID == active.sessionID {
+                        self?.optimisticPauseTarget = nil
+                    }
+                    self?.appendMenuLog("\(command)_recording_completed session_id=\(active.sessionID) exit_code=\(terminatedProcess.terminationStatus)")
+                    self?.updateIcon()
+                }
+            }
+            captureControlProcess = process
+            optimisticPauseTarget = OptimisticPauseTarget(sessionID: active.sessionID, isPaused: !paused)
+            try process.run()
+            updateIcon()
+        } catch {
+            captureControlProcess = nil
+            if optimisticPauseTarget?.sessionID == active.sessionID {
+                optimisticPauseTarget = nil
+            }
+            appendMenuLog("\(command)_recording_failed session_id=\(active.sessionID) error=\(error.localizedDescription)")
+            NSSound.beep()
         }
     }
 
@@ -189,6 +294,10 @@ final class StatusBarController: NSObject, NSMenuDelegate {
             NSSound.beep()
             updateIcon()
             return
+        }
+
+        if optimisticPauseTarget?.sessionID == active.sessionID {
+            optimisticPauseTarget = nil
         }
 
         // Kill the start process if it is still waiting for startup. The session runner

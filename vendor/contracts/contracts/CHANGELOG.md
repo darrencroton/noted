@@ -4,6 +4,13 @@ All notable changes to the `briefing` ↔ `noted` contracts are recorded here. V
 
 Rules for bumps and the change-proposal process live in `versioning-policy.md`.
 
+## Unreleased
+
+### Added
+
+- `noted pause --session-id <id>` and `noted continue --session-id <id>` as optional runtime controls. A paused session remains `status: "recording"` and reports the optional `is_paused` status property instead of adding a locked vocabulary value.
+- Optional `is_paused` property in `schemas/runtime-status.v1.json`.
+
 ## [1.0.1] — 2026-04-24
 
 Step 5 of the Initial Action Plan: shared fixtures for consumer contract tests.
