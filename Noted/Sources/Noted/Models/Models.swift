@@ -1,4 +1,5 @@
 import Foundation
+import WhisperKit
 
 enum SessionType: String, CaseIterable, Codable, Sendable {
     case meeting
@@ -70,6 +71,17 @@ enum TranscriptionModel: String, CaseIterable, Codable, Sendable {
             return "openai_whisper-base"
         case .whisperLargeV3:
             return "openai_whisper-large-v3"
+        }
+    }
+
+    var whisperVariant: ModelVariant? {
+        switch self {
+        case .parakeet, .appleSpeech:
+            return nil
+        case .whisperBase:
+            return .base
+        case .whisperLargeV3:
+            return .largev3
         }
     }
 

@@ -6,9 +6,15 @@ protocol OfflineDiarizationRunning: Sendable {
 }
 
 struct FluidAudioDiarizationRunner: OfflineDiarizationRunning {
+    let modelDirectory: URL
+
+    init(modelDirectory: URL = ModelCache.fluidAudioModelsDirectory) {
+        self.modelDirectory = modelDirectory
+    }
+
     func run(audioURL: URL, config: OfflineDiarizerConfig) async throws -> [DiarizationSegment] {
         let diarizer = OfflineDiarizerManager(config: config)
-        try await diarizer.prepareModels()
+        try await diarizer.prepareModels(directory: modelDirectory)
         let result = try await diarizer.process(audioURL)
         return result.segments.map { segment in
             DiarizationSegment(
@@ -53,7 +59,7 @@ struct HintRetryingDiarizer<Runner: OfflineDiarizationRunning>: Sendable {
 }
 
 extension HintRetryingDiarizer where Runner == FluidAudioDiarizationRunner {
-    init() {
-        self.init(runner: FluidAudioDiarizationRunner())
+    init(modelDirectory: URL = ModelCache.fluidAudioModelsDirectory) {
+        self.init(runner: FluidAudioDiarizationRunner(modelDirectory: modelDirectory))
     }
 }

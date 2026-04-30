@@ -83,7 +83,7 @@ final class TranscriptionEngine {
         modelDownloadState = .downloading
         assetStatus = "Downloading Parakeet model..."
         do {
-            try await AsrModels.download(version: .v3)
+            try await AsrModels.download(to: ModelCache.parakeetModelURL, version: .v3)
             modelDownloadState = .ready
         } catch {
             lastError = "Failed to download Parakeet model: \(error.localizedDescription)"
@@ -130,8 +130,7 @@ final class TranscriptionEngine {
         guard !isRunning else { return }
         switch model {
         case .parakeet:
-            let cacheDir = AsrModels.defaultCacheDirectory(for: .v3)
-            try? FileManager.default.removeItem(at: cacheDir)
+            try? FileManager.default.removeItem(at: ModelCache.parakeetModelURL)
             asrManager = nil
             modelDownloadState = .needed
         case .whisperBase, .whisperLargeV3:
@@ -231,7 +230,8 @@ final class TranscriptionEngine {
         }
 
         do {
-            return try await HintRetryingDiarizer().diarize(audioURL: audioURL, speakerCountHint: speakerCountHint)
+            return try await HintRetryingDiarizer(modelDirectory: ModelCache.fluidAudioModelsDirectory)
+                .diarize(audioURL: audioURL, speakerCountHint: speakerCountHint)
         } catch {
             diagLog("[DIARIZE] Failed: \(error.localizedDescription)")
             return nil
@@ -281,7 +281,7 @@ final class TranscriptionEngine {
         if asrManager == nil {
             assetStatus = "Loading Parakeet model..."
             do {
-                let models = try await AsrModels.downloadAndLoad(version: .v3)
+                let models = try await AsrModels.downloadAndLoad(to: ModelCache.parakeetModelURL, version: .v3)
                 let manager = AsrManager(config: .default)
                 try await manager.loadModels(models)
                 asrManager = manager

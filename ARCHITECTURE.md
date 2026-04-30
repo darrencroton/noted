@@ -68,11 +68,13 @@ Runtime registry and active-capture files:
 ~/Library/Application Support/noted/sessions/
 ```
 
-WhisperKit ASR models are cached under:
+Runtime model assets are cached under:
 
 ```text
 ~/Library/Application Support/noted/models/
 ```
+
+This cache root owns Parakeet-TDT v3, FluidAudio diarization, and WhisperKit models. The menubar app starts a background prefetch on launch and migrates known legacy FluidAudio model directories from `~/Library/Application Support/FluidAudio/Models/` when the noted-owned destination is empty.
 
 Session artefacts are written under the manifest-provided `paths.session_dir`; no consumer should infer outcome from logs or partial files.
 

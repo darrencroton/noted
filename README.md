@@ -66,7 +66,7 @@ no_interaction_grace_minutes = 5      # grace period before auto-stop if no popu
 
 The **Settings window** in the menubar app exposes the most common controls without editing the file directly: transcription model (with model cache status), transcript locale, input microphone, and the default output directory. A toggle for scheduled recording is also there — turning it off tells `briefing watch` not to launch `noted` for scheduled meetings on this Mac.
 
-WhisperKit models are cached under `~/Library/Application Support/noted/models/` and are downloaded on first use when WhisperKit is the selected backend.
+All downloaded model assets owned by `noted` are cached under `~/Library/Application Support/noted/models/`. On app launch, `noted` starts a background prefetch for Parakeet-TDT v3, FluidAudio diarization, Whisper Base, and Whisper Large v3. Existing FluidAudio caches from `~/Library/Application Support/FluidAudio/Models/` are migrated into the noted cache when possible.
 
 `briefing` has its own separate configuration at `user_config/settings.toml` inside the briefing repo.
 
