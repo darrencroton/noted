@@ -39,6 +39,16 @@ ln -sf "$PWD/dist/Noted.app/Contents/MacOS/Noted" "$HOME/.local/bin/noted"
 
 Ensure `$HOME/.local/bin` is on `PATH` for both your shell and any `launchd` jobs that run `briefing watch`. Run `which noted` to confirm.
 
+For `noted` to hand completed sessions back to `briefing`, make `briefing` available as a command too. From the `briefing` repo:
+
+```bash
+./scripts/setup.sh
+mkdir -p "$HOME/.local/bin"
+ln -sf "$PWD/.venv/bin/briefing" "$HOME/.local/bin/briefing"
+```
+
+Run `which briefing` to confirm. `noted` searches `$HOME/.local/bin` when it invokes `briefing session-ingest`, so this covers ad hoc sessions created from the menubar. As an alternative, set `briefing_command` in `~/Library/Application Support/noted/settings.toml` to the absolute path of the briefing executable.
+
 ## Settings
 
 `noted` keeps its settings at:
@@ -56,7 +66,7 @@ asr_backend = "fluidaudio-parakeet"   # or "whisperkit" or "sfspeech"
 asr_model_variant = "parakeet-v3"
 default_input_device = 0              # 0 = current system default microphone
 output_root = "~/Documents/noted"     # where session directories and ad hoc notes go
-briefing_command = "briefing"         # command invoked after each completed session
+briefing_command = "briefing"         # command or absolute path invoked after each completed session
 ingest_after_completion = true        # set false to disable the automatic briefing handoff
 diarization_enabled = true
 default_extension_minutes = 5
@@ -193,6 +203,8 @@ Check the session directory for:
 - `outputs/completion.json` — if absent, `noted` may still be processing
 - `transcript/transcript.txt` — if absent, ASR failed
 - `logs/briefing-ingest.stderr.log` — look for errors from `briefing session-ingest`
+
+If the stderr log says `env: briefing: No such file or directory`, install the briefing command symlink from the Installation section or set `briefing_command` to an absolute executable path.
 
 Rerun ingest manually:
 
