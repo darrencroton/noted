@@ -64,7 +64,7 @@ pre_end_prompt_minutes = 5            # minutes before scheduled end when the po
 no_interaction_grace_minutes = 5      # grace period before auto-stop if no popup response
 ```
 
-The **Settings window** in the menubar app exposes the most common controls without editing the file directly: transcription model (with model cache status), transcript locale, input microphone, and the default output directory. A toggle for scheduled recording is also there — turning it off tells `briefing watch` not to launch `noted` for scheduled meetings on this Mac.
+The **Settings window** in the menubar app exposes the most common controls without editing the file directly: transcription model (with model cache status), transcript locale, input microphone, the default output directory, and two toggles — one to enable or disable the automatic `briefing` summary handoff, and one for scheduled recording. The scheduled recording toggle tells `briefing watch` not to launch `noted` for scheduled meetings on this Mac.
 
 All downloaded model assets owned by `noted` are cached under `~/Library/Application Support/noted/models/`. On app launch, `noted` starts a background prefetch for Parakeet-TDT v3, FluidAudio diarization, Whisper Base, and Whisper Large v3. Existing FluidAudio caches from `~/Library/Application Support/FluidAudio/Models/` are migrated into the noted cache when possible.
 
@@ -99,19 +99,17 @@ To exclude a segment from the recording without ending the session — for a pri
 
 | Icon | Condition |
 |------|-----------|
-| Neutral | Idle — no active session |
+| Stopped | Idle — no active session |
 | Recording | Session is capturing audio |
-| Processing | Capture stopped; ASR and diarization running |
-| Warning | Last session ended with warnings or failed |
+| Paused | Capture suspended for the active session |
 
-The menu items:
+The menu shows current status as a non-interactive label at the top ("Status: ready", "Status: recording", or "Status: paused"). While a session is active, the meeting title and note filename are also shown inline. The interactive items:
 
-- **Start** — starts an ad hoc session. Not shown when a session is active.
-- **Pause / Continue** — pauses or resumes capture for the active session.
-- **Stop** — stops the active session.
-- **Status** — shows session ID, elapsed time, current phase, and scheduled end.
-- **Settings** — opens the settings panel.
-- **Quit** — quits `noted`. Asks for confirmation if a session is active.
+- **Start Ad Hoc Session** — starts an ad hoc session. Not shown when a session is active.
+- **Pause Recording / Continue Recording** — pauses or resumes capture for the active session. Only shown while a session is recording.
+- **Stop Recording** — stops the active session.
+- **Settings...** — opens the settings panel.
+- **Quit noted** — quits `noted`. Asks for confirmation if a session is active.
 
 ## Session directory
 
