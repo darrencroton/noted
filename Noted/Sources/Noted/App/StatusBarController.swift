@@ -37,6 +37,8 @@ final class StatusBarController: NSObject, NSMenuDelegate {
     }
 
     private func buildMenuItems(into menu: NSMenu) {
+        clearFinishedControlProcesses()
+
         let title = NSMenuItem(title: "noted", action: nil, keyEquivalent: "")
         title.isEnabled = false
         menu.addItem(title)
@@ -58,7 +60,7 @@ final class StatusBarController: NSObject, NSMenuDelegate {
 
         let isStarting = adHocStartProcess?.isRunning == true
         let canStart = activeCapture == nil && !isStarting
-        appendMenuLog("menu_built canStart=\(canStart) activeCapture=\(activeCapture != nil) isStarting=\(isStarting) stopProcess=\(stopProcess != nil) paused=\(paused)")
+        appendMenuLog("menu_built canStart=\(canStart) activeCapture=\(activeCapture != nil) isStarting=\(isStarting) stopProcessRunning=\(stopProcess?.isRunning == true) paused=\(paused)")
 
         if canStart {
             menu.addItem(makeItem("Start Ad Hoc Session", action: #selector(startRecording(_:))))
@@ -122,17 +124,29 @@ final class StatusBarController: NSObject, NSMenuDelegate {
         return RuntimeFiles.readStatus(sessionDir: sessionDir)
     }
 
-    // Returns true when an active capture is registered and no stop is in flight.
-    // stopProcess being non-nil means Stop was just triggered; treat as not-recording
-    // immediately so the icon reverts the instant the user clicks Stop, regardless of
-    // when active-capture.json is cleaned up by the session runner.
+    // Returns true when an active capture is registered and no stop is actively in flight.
+    // A finished stop Process can remain assigned briefly if AppKit delivery races the
+    // polling tick, so only a running stop process should suppress the recording icon.
     private var isRecording: Bool {
-        stopProcess == nil &&
+        stopProcess?.isRunning != true &&
         (adHocStartProcess?.isRunning == true || RuntimeFiles.readLiveActiveCapture() != nil)
+    }
+
+    private func clearFinishedControlProcesses() {
+        if adHocStartProcess?.isRunning == false {
+            adHocStartProcess = nil
+        }
+        if stopProcess?.isRunning == false {
+            stopProcess = nil
+        }
+        if captureControlProcess?.isRunning == false {
+            captureControlProcess = nil
+        }
     }
 
     private func updateIcon() {
         guard let button = statusItem?.button else { return }
+        clearFinishedControlProcesses()
         if isRecording {
             let activeCapture = RuntimeFiles.readLiveActiveCapture()
             let activeStatus = activeCapture.flatMap { readActiveStatus(activeCapture: $0) }
