@@ -177,6 +177,27 @@ enum RuntimeFiles {
         runtimeDirectory.appendingPathComponent("active-capture.lock", isDirectory: true)
     }
 
+    static var lastIngestFailedURL: URL {
+        runtimeDirectory.appendingPathComponent("last-ingest-failed.json")
+    }
+
+    static func writeLastIngestFailed(sessionID: String) {
+        let payload: [String: Any] = [
+            "session_id": sessionID,
+            "failed_at": ISO8601.withOffset(Date()),
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) else { return }
+        try? data.write(to: lastIngestFailedURL, options: .atomic)
+    }
+
+    static func clearLastIngestFailed() {
+        try? FileManager.default.removeItem(at: lastIngestFailedURL)
+    }
+
+    static func hasLastIngestFailed() -> Bool {
+        FileManager.default.fileExists(atPath: lastIngestFailedURL.path)
+    }
+
     static func prepareSupportDirectories() throws {
         try FileManager.default.createDirectory(at: runtimeDirectory, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: registryDirectory, withIntermediateDirectories: true)

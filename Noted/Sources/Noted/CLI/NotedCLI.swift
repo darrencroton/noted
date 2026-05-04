@@ -165,10 +165,15 @@ struct NotedCLI {
         let sessionDir = URL(fileURLWithPath: manifest.paths.sessionDir, isDirectory: true)
         do {
             guard try RuntimeFiles.tryAcquireActiveCapture(sessionID: manifest.sessionID, sessionDir: sessionDir) else {
-                writeJSON(["ok": false, "session_id": manifest.sessionID, "error": "session_already_running"])
+                var payload: [String: Any] = ["ok": false, "session_id": manifest.sessionID, "error": "session_already_running"]
+                if let runningID = RuntimeFiles.readActiveCapture()?.sessionID {
+                    payload["running_session_id"] = runningID
+                }
+                writeJSON(payload)
                 return 5
             }
 
+            RuntimeFiles.clearLastIngestFailed()
             try prepareSessionDirectory(manifest: manifest, sourceManifestURL: manifestURL, sessionDir: sessionDir)
             try RuntimeFiles.writeStatus(
                 sessionID: manifest.sessionID,
@@ -553,10 +558,9 @@ struct NotedCLI {
         let nextProcess = Process()
         nextProcess.executableURL = executableURL
         nextProcess.arguments = ["start", "--manifest", nextManifestPath]
-        nextProcess.environment = IntegrationProcessEnvironment.environment(
-            extraExecutableSearchPaths: IntegrationProcessEnvironment.briefingHandoffSearchPaths(
-                sessionDir: URL(fileURLWithPath: nextManifest.paths.sessionDir, isDirectory: true)
-            )
+        IntegrationProcessEnvironment.configureBriefingScopedProcess(
+            nextProcess,
+            sessionDir: URL(fileURLWithPath: nextManifest.paths.sessionDir, isDirectory: true)
         )
         nextProcess.standardOutput = Pipe()
         nextProcess.standardError = FileHandle.standardError
@@ -870,10 +874,9 @@ struct NotedCLI {
                     let nextProcess = Process()
                     nextProcess.executableURL = executableURL
                     nextProcess.arguments = ["start", "--manifest", nextPath]
-                    nextProcess.environment = IntegrationProcessEnvironment.environment(
-                        extraExecutableSearchPaths: IntegrationProcessEnvironment.briefingHandoffSearchPaths(
-                            sessionDir: URL(fileURLWithPath: nextManifest.paths.sessionDir, isDirectory: true)
-                        )
+                    IntegrationProcessEnvironment.configureBriefingScopedProcess(
+                        nextProcess,
+                        sessionDir: URL(fileURLWithPath: nextManifest.paths.sessionDir, isDirectory: true)
                     )
                     nextProcess.standardOutput = Pipe()
                     nextProcess.standardError = FileHandle.standardError
@@ -1172,9 +1175,7 @@ struct NotedCLI {
         let process = Process()
         process.executableURL = executableURL
         process.arguments = ["__run-session", "--manifest", manifestPath]
-        process.environment = IntegrationProcessEnvironment.environment(
-            extraExecutableSearchPaths: IntegrationProcessEnvironment.briefingHandoffSearchPaths(sessionDir: sessionDir)
-        )
+        IntegrationProcessEnvironment.configureBriefingScopedProcess(process, sessionDir: sessionDir)
         let logURL = sessionDir.appendingPathComponent("logs/noted.log")
         let logHandle = try FileHandle(forWritingTo: logURL)
         logHandle.seekToEndOfFile()
@@ -1219,9 +1220,7 @@ struct NotedCLI {
                 process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
                 process.arguments = [command, "session-ingest", "--session-dir", sessionDir.path]
             }
-            process.environment = IntegrationProcessEnvironment.environment(
-                extraExecutableSearchPaths: IntegrationProcessEnvironment.briefingHandoffSearchPaths(sessionDir: sessionDir)
-            )
+            IntegrationProcessEnvironment.configureBriefingScopedProcess(process, sessionDir: sessionDir)
             process.standardOutput = stdoutHandle
             process.standardError = stderrHandle
             defer {
@@ -1239,6 +1238,9 @@ struct NotedCLI {
                 sessionDir: sessionDir,
                 "briefing ingest completed: command=\(command) exit_code=\(process.terminationStatus) session_id=\(sessionID) terminal_status=\(terminalStatus) stdout=\(stdoutURL.path) stderr=\(stderrURL.path)"
             )
+            if process.terminationStatus != 0 {
+                RuntimeFiles.writeLastIngestFailed(sessionID: sessionID)
+            }
         } catch {
             appendLog(
                 sessionDir: sessionDir,

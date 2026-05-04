@@ -162,6 +162,13 @@ final class StatusBarController: NSObject, NSMenuDelegate {
                 image?.isTemplate = false
                 button.image = image
             }
+        } else if RuntimeFiles.hasLastIngestFailed() {
+            let config = NSImage.SymbolConfiguration(paletteColors: [.systemOrange])
+            let image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "noted: last ingest failed")
+                .flatMap { $0.withSymbolConfiguration(config) }
+                ?? NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "noted: last ingest failed")
+            image?.isTemplate = false
+            button.image = image
         } else {
             let image = NSImage(systemSymbolName: "stop.fill", accessibilityDescription: "noted")
             image?.isTemplate = true

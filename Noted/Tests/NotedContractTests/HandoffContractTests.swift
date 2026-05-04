@@ -140,6 +140,7 @@ final class HandoffContractTests: XCTestCase {
         XCTAssertTrue(path.split(separator: ":").contains("/tmp/briefing/.venv/bin"))
         XCTAssertTrue(path.hasPrefix("/tmp/briefing/.venv/bin:"),
                       "session-scoped briefing executable path should take precedence over a GUI PATH")
+        XCTAssertEqual(IntegrationProcessEnvironment.briefingRootURL(sessionDir: sessionDir)?.path, "/tmp/briefing")
     }
 
     func testHandoffEnvironmentDoesNotInferBriefingPathForNonCalendarSessions() {

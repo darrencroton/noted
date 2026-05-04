@@ -27,15 +27,20 @@ enum IntegrationProcessEnvironment {
         return environment
     }
 
-    static func briefingHandoffSearchPaths(sessionDir: URL) -> [String] {
+    static func briefingRootURL(sessionDir: URL) -> URL? {
         let sessionsDir = sessionDir.deletingLastPathComponent()
-        guard sessionsDir.lastPathComponent == "sessions" else {
-            return []
-        }
-        let briefingRoot = sessionsDir.deletingLastPathComponent()
-        return [
-            briefingRoot.appendingPathComponent(".venv/bin", isDirectory: true).path,
-        ]
+        guard sessionsDir.lastPathComponent == "sessions" else { return nil }
+        return sessionsDir.deletingLastPathComponent()
+    }
+
+    static func briefingHandoffSearchPaths(sessionDir: URL) -> [String] {
+        guard let briefingRoot = briefingRootURL(sessionDir: sessionDir) else { return [] }
+        return [briefingRoot.appendingPathComponent(".venv/bin", isDirectory: true).path]
+    }
+
+    static func configureBriefingScopedProcess(_ process: Process, sessionDir: URL) {
+        process.environment = environment(extraExecutableSearchPaths: briefingHandoffSearchPaths(sessionDir: sessionDir))
+        process.currentDirectoryURL = briefingRootURL(sessionDir: sessionDir)
     }
 
     static func mergedPath(existingPath: String?, extraPaths: [String]) -> String {

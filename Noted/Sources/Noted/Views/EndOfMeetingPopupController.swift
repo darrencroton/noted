@@ -49,6 +49,8 @@ final class EndOfMeetingPopupController {
         }
         let isFollowUp = promptInfo["is_follow_up"] as? Bool ?? false
 
+        // Re-read the manifest at popup display time so that briefing watch's in-flight refresh
+        // (which patches next_meeting into the manifest after session start) is reflected.
         let manifestURL = sessionDir.appendingPathComponent("manifest.json")
         guard let manifestData = try? Data(contentsOf: manifestURL),
               let manifest = ManifestValidator.validate(data: manifestData).manifest
