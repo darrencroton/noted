@@ -89,7 +89,7 @@ This is the sequence for a calendar-driven meeting:
 3. During the meeting the menubar icon shows the recording state. `noted` streams a live transcript as audio arrives.
 4. Five minutes before the scheduled end, a popup appears with **Stop**, **+5 min**, and (when a back-to-back meeting is scheduled) **Next Meeting**.
    - **Stop** — stops the recording immediately.
-   - **+5 min** — extends the session. The popup reappears before the new end time.
+   - **+5 min** — extends the session. The same popup reappears before the new end time, including **Next Meeting** when one is scheduled.
    - **Next Meeting** — stops this session and starts the next one in one fast handoff.
    - No interaction — `noted` stops at the scheduled end time, or auto-switches to the next meeting if one exists.
 5. `noted stop` returns quickly. Audio is flushed; `noted` keeps running in the background through ASR and diarization.

@@ -34,29 +34,12 @@ final class EndOfMeetingContractTests: XCTestCase {
 
         let payload: [String: Any] = [
             "prompt_at": iso8601Now(),
-            "is_follow_up": false,
         ]
         let url = tmp.appendingPathComponent("pre-end-prompt.json")
         try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]).write(to: url)
 
         let loaded = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
         XCTAssertNotNil(loaded["prompt_at"] as? String)
-        XCTAssertEqual(loaded["is_follow_up"] as? Bool, false)
-    }
-
-    func testFollowUpPromptIsMarkedDistinctly() throws {
-        let tmp = makeTempDir()
-        defer { try? FileManager.default.removeItem(at: tmp) }
-
-        let payload: [String: Any] = [
-            "prompt_at": iso8601Now(),
-            "is_follow_up": true,
-        ]
-        let url = tmp.appendingPathComponent("pre-end-prompt.json")
-        try JSONSerialization.data(withJSONObject: payload, options: []).write(to: url)
-
-        let loaded = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any])
-        XCTAssertEqual(loaded["is_follow_up"] as? Bool, true)
     }
 
     // MARK: - extend

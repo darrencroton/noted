@@ -42,13 +42,6 @@ final class EndOfMeetingPopupController {
         // Already showing for this session.
         if currentPromptSessionDir == sessionDir { return }
 
-        guard let promptData = try? Data(contentsOf: promptURL),
-              let promptInfo = try? JSONSerialization.jsonObject(with: promptData) as? [String: Any]
-        else {
-            return
-        }
-        let isFollowUp = promptInfo["is_follow_up"] as? Bool ?? false
-
         // Re-read the manifest at popup display time so that briefing watch's in-flight refresh
         // (which patches next_meeting into the manifest after session start) is reflected.
         let manifestURL = sessionDir.appendingPathComponent("manifest.json")
@@ -58,27 +51,25 @@ final class EndOfMeetingPopupController {
             return
         }
 
-        showPopup(sessionID: active.sessionID, sessionDir: sessionDir, manifest: manifest, isFollowUp: isFollowUp)
+        showPopup(sessionID: active.sessionID, sessionDir: sessionDir, manifest: manifest)
     }
 
     // MARK: - Popup lifecycle
 
-    private func showPopup(sessionID: String, sessionDir: URL, manifest: SessionManifest, isFollowUp: Bool) {
+    private func showPopup(sessionID: String, sessionDir: URL, manifest: SessionManifest) {
         currentPromptSessionDir = sessionDir
 
         // scheduledEndTime is always non-nil here: the session runner suppresses pre-end-prompt.json
         // for ad hoc sessions (null scheduledEndTime), so this path is never reached for ad hoc.
         let scheduledEnd = manifest.meeting.scheduledEndTime.flatMap(ISO8601.parseDate(_:)) ?? Date()
         let extensionMinutes = manifest.recordingPolicy.defaultExtensionMinutes
-        // §12.4: Next Meeting is never re-offered in the follow-up notification.
-        let offerNextMeeting = !isFollowUp && manifest.nextMeeting.exists
+        let offerNextMeeting = Self.shouldOfferNextMeeting(manifest: manifest)
 
         let view = EndOfMeetingView(
             meetingTitle: manifest.meeting.title,
             scheduledEnd: scheduledEnd,
             defaultExtensionMinutes: extensionMinutes,
             offerNextMeeting: offerNextMeeting,
-            isFollowUp: isFollowUp,
             onStop: { [weak self] in
                 self?.dismissPopup()
                 self?.invokeCLI(["stop", "--session-id", sessionID])
@@ -93,9 +84,8 @@ final class EndOfMeetingPopupController {
             }
         )
 
-        let height: CGFloat = isFollowUp ? 150 : 190
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 340, height: height),
+            contentRect: NSRect(x: 0, y: 0, width: 340, height: 190),
             styleMask: [.titled, .closable, .nonactivatingPanel, .hudWindow],
             backing: .buffered,
             defer: false
@@ -142,6 +132,10 @@ final class EndOfMeetingPopupController {
         process.standardError = Pipe()
         try? process.run()
     }
+
+    nonisolated static func shouldOfferNextMeeting(manifest: SessionManifest) -> Bool {
+        manifest.nextMeeting.exists
+    }
 }
 
 // MARK: - NSWindowDelegate bridge
@@ -162,14 +156,13 @@ struct EndOfMeetingView: View {
     let scheduledEnd: Date
     let defaultExtensionMinutes: Int
     let offerNextMeeting: Bool
-    let isFollowUp: Bool
     let onStop: () -> Void
     let onExtend: () -> Void
     let onSwitchNext: () -> Void
 
     var body: some View {
         VStack(alignment: .center, spacing: 10) {
-            Text(isFollowUp ? "Still recording?" : "Session ending soon")
+            Text("Session ending soon")
                 .font(.headline)
                 .multilineTextAlignment(.center)
 
@@ -189,26 +182,16 @@ struct EndOfMeetingView: View {
 
             Divider()
 
-            if isFollowUp {
-                HStack(spacing: 8) {
-                    Button("Still going (+\(defaultExtensionMinutes) min)") { onExtend() }
-                        .buttonStyle(.bordered)
-                    Button("Stop", role: .destructive) { onStop() }
-                        .buttonStyle(.bordered)
+            HStack(spacing: 8) {
+                Button("Stop", role: .destructive) { onStop() }
+                Button("+\(defaultExtensionMinutes) min") { onExtend() }
+                if offerNextMeeting {
+                    Button("Next Meeting") { onSwitchNext() }
+                        .buttonStyle(.borderedProminent)
                 }
-                .frame(maxWidth: .infinity, alignment: .center)
-            } else {
-                HStack(spacing: 8) {
-                    Button("Stop", role: .destructive) { onStop() }
-                    Button("+\(defaultExtensionMinutes) min") { onExtend() }
-                    if offerNextMeeting {
-                        Button("Next Meeting") { onSwitchNext() }
-                            .buttonStyle(.borderedProminent)
-                    }
-                }
-                .buttonStyle(.bordered)
-                .frame(maxWidth: .infinity, alignment: .center)
             }
+            .buttonStyle(.bordered)
+            .frame(maxWidth: .infinity, alignment: .center)
         }
         .padding(18)
         .frame(width: 304)

@@ -790,8 +790,8 @@ struct NotedCLI {
                         inMemoryPreEndPromptShown = true
                         playEndOfMeetingBeep()
 
-                        let isFollowUp = inMemoryExtensionMinutes > 0
-                        try? RuntimeFiles.writePreEndPrompt(sessionDir: sessionDir, promptAt: now, isFollowUp: isFollowUp)
+                        let isFollowUp = inMemoryExtensionMinutes > 0  // Logging only; not surfaced in popup IPC.
+                        try? RuntimeFiles.writePreEndPrompt(sessionDir: sessionDir, promptAt: now)
                         try? RuntimeFiles.writeStatus(
                             sessionID: manifest.sessionID,
                             sessionDir: sessionDir,

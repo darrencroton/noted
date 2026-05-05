@@ -328,10 +328,9 @@ enum RuntimeFiles {
         sessionDir.appendingPathComponent("runtime/next-manifest-missing.json")
     }
 
-    static func writePreEndPrompt(sessionDir: URL, promptAt: Date, isFollowUp: Bool) throws {
+    static func writePreEndPrompt(sessionDir: URL, promptAt: Date) throws {
         let payload: [String: Any] = [
             "prompt_at": ISO8601.withOffset(promptAt),
-            "is_follow_up": isFollowUp,
         ]
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: preEndPromptURL(sessionDir: sessionDir), options: .atomic)
