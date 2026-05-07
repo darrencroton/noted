@@ -56,9 +56,9 @@ final class PostSessionProcessorTests: XCTestCase {
         XCTAssertTrue(transcriptText.contains("microphone: fallback transcript"))
     }
 
-    func testMicPlusSystemWritesSourcePrefixedSpeakerLabels() async throws {
+    func testOnlineModeWritesSourcePrefixedSpeakerLabels() async throws {
         let fixture = try makeSessionFixture(
-            audioStrategy: "mic_plus_system",
+            modeType: "online",
             micAudioDuration: 2.5,
             systemAudioDuration: 2.0
         )
@@ -87,8 +87,8 @@ final class PostSessionProcessorTests: XCTestCase {
         XCTAssertTrue(transcriptText.contains("mic_speaker_0:"))
         XCTAssertTrue(transcriptText.contains("mic_speaker_1:"))
         XCTAssertTrue(transcriptText.contains("system_speaker_0:"))
-        // "] speaker_N:" is the unprefixed pattern from room_mic; it must not appear in a mic_plus_system session.
-        XCTAssertFalse(transcriptText.contains("] speaker_"), "Unprefixed speaker labels must not appear in mic_plus_system sessions")
+        // "] speaker_N:" is the unprefixed pattern from in_person mode; it must not appear in online/hybrid sessions.
+        XCTAssertFalse(transcriptText.contains("] speaker_"), "Unprefixed speaker labels must not appear in online sessions")
 
         let document = try loadTranscriptDocument(fixture.descriptor.transcriptDirectory.appendingPathComponent("transcript.json"))
         let speakerIDs = Set(document.segments.map(\.speakerId))
@@ -97,9 +97,9 @@ final class PostSessionProcessorTests: XCTestCase {
         XCTAssertTrue(speakerIDs.contains("system_speaker_0"))
     }
 
-    func testMicPlusSystemSegmentsMergeChronologically() async throws {
+    func testOnlineModeSegmentsMergeChronologically() async throws {
         let fixture = try makeSessionFixture(
-            audioStrategy: "mic_plus_system",
+            modeType: "online",
             micAudioDuration: 2.5,
             systemAudioDuration: 2.5
         )
@@ -128,9 +128,9 @@ final class PostSessionProcessorTests: XCTestCase {
         }
     }
 
-    func testMicPlusSystemMissingSystemSourceFallsBackGracefully() async throws {
+    func testHybridModeMissingSystemSourceFallsBackGracefully() async throws {
         let fixture = try makeSessionFixture(
-            audioStrategy: "mic_plus_system",
+            modeType: "hybrid",
             micAudioDuration: 2.0,
             systemAudioDuration: nil  // system audio file not written
         )
@@ -200,11 +200,11 @@ final class PostSessionProcessorTests: XCTestCase {
     }
 
     private func makeSessionFixture(audioDuration: Double) throws -> SessionFixture {
-        try makeSessionFixture(audioStrategy: "room_mic", micAudioDuration: audioDuration, systemAudioDuration: nil)
+        try makeSessionFixture(modeType: "in_person", micAudioDuration: audioDuration, systemAudioDuration: nil)
     }
 
     private func makeSessionFixture(
-        audioStrategy: String,
+        modeType: String,
         micAudioDuration: Double,
         systemAudioDuration: Double?
     ) throws -> SessionFixture {
@@ -215,7 +215,7 @@ final class PostSessionProcessorTests: XCTestCase {
             directory: root,
             type: .meeting,
             startedAt: Date(timeIntervalSince1970: 0),
-            audioStrategy: audioStrategy
+            modeType: modeType
         )
         try SessionStore.createCanonicalDirectories(at: root)
         try writeTestWAV(to: descriptor.microphoneAudioURL, duration: micAudioDuration)
@@ -223,9 +223,8 @@ final class PostSessionProcessorTests: XCTestCase {
             try writeTestWAV(to: descriptor.systemAudioURL, duration: sysDuration)
         }
 
-        let modeType = audioStrategy == "mic_plus_system" ? "online" : "in_person"
         let manifest = SessionManifest(
-            schemaVersion: "1.0",
+            schemaVersion: "2.0",
             sessionID: descriptor.id,
             createdAt: "2026-04-27T10:00:00+10:00",
             meeting: .init(
@@ -235,7 +234,7 @@ final class PostSessionProcessorTests: XCTestCase {
                 scheduledEndTime: nil,
                 timezone: "Australia/Melbourne"
             ),
-            mode: .init(type: modeType, audioStrategy: audioStrategy),
+            mode: .init(type: modeType),
             participants: .init(
                 hostName: "Host",
                 attendeesExpected: 2,

@@ -21,7 +21,7 @@ final class FixtureContractTests: XCTestCase {
         let tagURL = contractsSnapshotRoot.appendingPathComponent("CONTRACTS_TAG")
         let tag = try String(contentsOf: tagURL, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
 
-        XCTAssertEqual(tag, "v1.0.2")
+        XCTAssertEqual(tag, "v2.0.0")
     }
 
     func testValidManifestFixturesContainInputsNotedRequiresToStartCapture() throws {
@@ -34,7 +34,7 @@ final class FixtureContractTests: XCTestCase {
 
         for filename in filenames {
             let manifest = try loadObject("manifests/\(filename)")
-            XCTAssertEqual(manifest["schema_version"] as? String, "1.0", filename)
+            XCTAssertEqual(manifest["schema_version"] as? String, "2.0", filename)
 
             let meeting = try XCTUnwrap(manifest["meeting"] as? [String: Any], filename)
             XCTAssertNotNil(meeting["start_time"], filename)
@@ -42,6 +42,9 @@ final class FixtureContractTests: XCTestCase {
 
             let participants = try XCTUnwrap(manifest["participants"] as? [String: Any], filename)
             XCTAssertEqual(participants["names_are_hints_only"] as? Bool, true, filename)
+
+            let mode = try XCTUnwrap(manifest["mode"] as? [String: Any], filename)
+            XCTAssertNil(mode["audio_strategy"], filename)
 
             let paths = try XCTUnwrap(manifest["paths"] as? [String: Any], filename)
             XCTAssertFalse(try XCTUnwrap(paths["session_dir"] as? String, filename).isEmpty, filename)

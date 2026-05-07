@@ -129,7 +129,9 @@ Every session writes its artefacts under the path specified in its manifest:
 <session_dir>/
 ├── manifest.json
 ├── audio/
-│   └── raw_room.wav              (in_person; raw_mic.wav + raw_system.wav for online)
+│   ├── raw_room.wav              (in_person)
+│   ├── raw_mic.wav               (online or hybrid)
+│   └── raw_system.wav            (online or hybrid)
 ├── transcript/
 │   ├── transcript.txt
 │   ├── transcript.json

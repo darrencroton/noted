@@ -1,4 +1,5 @@
 import AppKit
+import CoreAudio
 import Foundation
 
 enum PauseStateRequestApplier {
@@ -691,7 +692,7 @@ struct NotedCLI {
             directory: sessionDir,
             type: .meeting,
             startedAt: startedAt,
-            audioStrategy: manifest.resolvedAudioStrategy
+            modeType: manifest.mode.type
         )
         let settings = RuntimeSettings.load()
         let transcriptionEngine = TranscriptionEngine()
@@ -709,12 +710,22 @@ struct NotedCLI {
                 scheduledEndTime: manifest.meeting.scheduledEndTime
             )
             appendLog(sessionDir: sessionDir, "starting audio capture")
+            let resolvedMicID: AudioDeviceID = settings.defaultInputDevice > 0
+                ? settings.defaultInputDevice
+                : (MicCapture.defaultInputDeviceID() ?? 0)
+            let resolvedMicName = resolvedMicID > 0
+                ? (MicCapture.deviceName(for: resolvedMicID) ?? "<unknown>")
+                : "<none>"
+            appendLog(
+                sessionDir: sessionDir,
+                "capture mode=\(manifest.mode.type) input_device_id=\(resolvedMicID) input_device_name=\(resolvedMicName) system_audio=\(descriptor.capturesSystemAudio)"
+            )
             await transcriptionEngine.start(
                 locale: Locale(identifier: manifest.transcription.language ?? settings.language),
                 inputDeviceID: settings.defaultInputDevice,
                 rawMicrophoneAudioURL: descriptor.microphoneAudioURL,
                 rawSystemAudioURL: descriptor.systemAudioURL,
-                captureSystemAudio: descriptor.usesMicPlusSystem
+                captureSystemAudio: descriptor.capturesSystemAudio
             )
 
             if !transcriptionEngine.isRunning {
@@ -1065,7 +1076,7 @@ struct NotedCLI {
         startedAt: String?,
         error: String
     ) async throws {
-        let artefacts = processingArtefacts(sessionDir: sessionDir, audioStrategy: manifest.resolvedAudioStrategy)
+        let artefacts = processingArtefacts(sessionDir: sessionDir, modeType: manifest.mode.type)
         let terminalStatus = artefacts.audioOK ? "completed_with_warnings" : "failed"
         try RuntimeFiles.writeStatus(
             sessionID: manifest.sessionID,
@@ -1101,9 +1112,9 @@ struct NotedCLI {
         )
     }
 
-    private func processingArtefacts(sessionDir: URL, audioStrategy: String) -> (audioOK: Bool, transcriptOK: Bool, diarizationOK: Bool) {
+    private func processingArtefacts(sessionDir: URL, modeType: String) -> (audioOK: Bool, transcriptOK: Bool, diarizationOK: Bool) {
         let audioDirectory = sessionDir.appendingPathComponent("audio", isDirectory: true)
-        let audioURLs: [URL] = audioStrategy == "mic_plus_system"
+        let audioURLs: [URL] = modeType == "online" || modeType == "hybrid"
             ? [
                 audioDirectory.appendingPathComponent("raw_mic.wav"),
                 audioDirectory.appendingPathComponent("raw_system.wav"),
@@ -1464,18 +1475,24 @@ enum ContractSnapshot {
     }
 
     static var manifestSchemaVersion: String {
-        schemaVersion(schemaName: "manifest") ?? "1.0"
+        schemaVersion(schemaName: "manifest") ?? "2.0"
     }
 
     static var completionSchemaVersion: String {
         schemaVersion(schemaName: "completion") ?? "1.0"
     }
 
+    private static let schemaDescriptors: [String: (filename: String, version: String)] = [
+        "manifest": ("manifest.v2.json", "2.0"),
+        "completion": ("completion.v1.json", "1.0"),
+    ]
+
     private static func schemaVersion(schemaName: String) -> String? {
+        guard let descriptor = schemaDescriptors[schemaName] else { return nil }
         guard let root = findRepositoryRoot() else { return nil }
-        let schemaURL = root.appendingPathComponent("vendor/contracts/contracts/schemas/\(schemaName).v1.json")
+        let schemaURL = root.appendingPathComponent("vendor/contracts/contracts/schemas/\(descriptor.filename)")
         guard FileManager.default.fileExists(atPath: schemaURL.path) else { return nil }
-        return "1.0"
+        return descriptor.version
     }
 
     private static func findRepositoryRoot() -> URL? {

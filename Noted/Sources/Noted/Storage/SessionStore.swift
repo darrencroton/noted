@@ -5,20 +5,20 @@ struct SessionDescriptor: Sendable {
     let directory: URL
     let type: SessionType
     let startedAt: Date
-    let audioStrategy: String
+    let modeType: String
 
     init(
         id: String,
         directory: URL,
         type: SessionType,
         startedAt: Date,
-        audioStrategy: String = "room_mic"
+        modeType: String = "in_person"
     ) {
         self.id = id
         self.directory = directory
         self.type = type
         self.startedAt = startedAt
-        self.audioStrategy = audioStrategy
+        self.modeType = modeType
     }
 
     var audioDirectory: URL {
@@ -37,10 +37,10 @@ struct SessionDescriptor: Sendable {
         directory.appendingPathComponent("runtime", isDirectory: true)
     }
 
-    var usesMicPlusSystem: Bool { audioStrategy == "mic_plus_system" }
+    var capturesSystemAudio: Bool { modeType == "online" || modeType == "hybrid" }
 
     var microphoneAudioURL: URL {
-        usesMicPlusSystem
+        capturesSystemAudio
             ? audioDirectory.appendingPathComponent("raw_mic.wav")
             : audioDirectory.appendingPathComponent("raw_room.wav")
     }

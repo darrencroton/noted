@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.0] - 2026-05-07
+
+- Pinned contracts v2.0.0.
+- Removed manifest `mode.audio_strategy`; capture layout now follows `mode.type` directly.
+- `in_person` captures `raw_room.wav`; `online` and `hybrid` capture `raw_mic.wav` plus `raw_system.wav`.
+
 ## [0.2.0] - 2026-04-30
 
 - Added `noted pause --session-id <id>` and `noted continue --session-id <id>` CLI commands and matching menubar controls.

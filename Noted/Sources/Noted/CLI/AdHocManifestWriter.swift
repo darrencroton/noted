@@ -20,7 +20,7 @@ struct AdHocManifestWriter {
                 scheduledEndTime: nil,
                 timezone: TimeZone.current.identifier
             ),
-            mode: SessionManifest.Mode(type: "in_person", audioStrategy: "room_mic"),
+            mode: SessionManifest.Mode(type: "in_person"),
             participants: SessionManifest.Participants(
                 hostName: settings.hostName,
                 attendeesExpected: nil,

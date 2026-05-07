@@ -16,7 +16,7 @@ noted start --manifest <manifest.json>
 spawn __run-session child
   |
   | play recording-start bell
-  | capture room mic or mic + system audio
+  | capture audio according to mode.type
   | stream transcript.txt and transcript.json
   |
   +-- noted stop --session-id <id>
@@ -104,7 +104,7 @@ Session artefacts are written under the manifest-provided `paths.session_dir`; n
     `-- briefing-ingest.stderr.log
 ```
 
-Room-mic sessions write `audio/raw_room.wav`. Mic-plus-system sessions write `audio/raw_mic.wav` and `audio/raw_system.wav`.
+`in_person` sessions write `audio/raw_room.wav`. `online` and `hybrid` sessions write `audio/raw_mic.wav` and `audio/raw_system.wav`.
 
 ## Contracts
 

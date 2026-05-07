@@ -132,7 +132,7 @@ struct PostSessionProcessor {
     }
 
     private func sources(for descriptor: SessionDescriptor) -> [AudioProcessingSource] {
-        if descriptor.usesMicPlusSystem {
+        if descriptor.capturesSystemAudio {
             return [
                 AudioProcessingSource(
                     url: descriptor.microphoneAudioURL,

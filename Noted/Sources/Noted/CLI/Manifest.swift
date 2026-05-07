@@ -13,13 +13,6 @@ struct SessionManifest: Codable, Sendable {
     let transcription: Transcription
     let hooks: Hooks?
 
-    var resolvedAudioStrategy: String {
-        if let audioStrategy = mode.audioStrategy {
-            return audioStrategy
-        }
-        return mode.type == "online" ? "mic_plus_system" : "room_mic"
-    }
-
     struct Meeting: Codable, Sendable {
         let eventID: String?
         let title: String
@@ -55,12 +48,6 @@ struct SessionManifest: Codable, Sendable {
 
     struct Mode: Codable, Sendable {
         let type: String
-        let audioStrategy: String?
-
-        enum CodingKeys: String, CodingKey {
-            case type
-            case audioStrategy = "audio_strategy"
-        }
     }
 
     struct Participants: Codable, Sendable {
@@ -195,7 +182,7 @@ enum ManifestValidator {
 
         schemaVersion = object["schema_version"] as? String
         requireString("schema_version", in: object, errors: &errors)
-        if let schemaVersion, !isMajorOneSchemaVersion(schemaVersion) {
+        if let schemaVersion, !isMajorTwoSchemaVersion(schemaVersion) {
             errors.append("unsupported_schema_version: \(schemaVersion)")
         }
 
@@ -213,8 +200,8 @@ enum ManifestValidator {
 
         if let mode = requireObject("mode", in: object, errors: &errors) {
             requireEnum("type", in: mode, allowed: ["in_person", "online", "hybrid"], errors: &errors)
-            if mode["audio_strategy"] != nil {
-                requireEnum("audio_strategy", in: mode, allowed: ["room_mic", "mic_plus_system"], errors: &errors)
+            if let strategy = mode["audio_strategy"] {
+                errors.append("mode.audio_strategy_removed: \(strategy)")
             }
         }
 
@@ -365,7 +352,7 @@ enum ManifestValidator {
         return fractionalFormatter.date(from: value) != nil
     }
 
-    private static func isMajorOneSchemaVersion(_ value: String) -> Bool {
-        value.range(of: #"^1\.[0-9]+$"#, options: .regularExpression) != nil
+    private static func isMajorTwoSchemaVersion(_ value: String) -> Bool {
+        value.range(of: #"^2\.[0-9]+$"#, options: .regularExpression) != nil
     }
 }

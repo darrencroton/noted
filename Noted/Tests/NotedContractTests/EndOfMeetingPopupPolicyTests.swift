@@ -47,7 +47,7 @@ final class EndOfMeetingPopupPolicyTests: XCTestCase {
                 scheduledEndTime: "2026-04-27T11:00:00+10:00",
                 timezone: "Australia/Melbourne"
             ),
-            mode: .init(type: "in_person", audioStrategy: "room_mic"),
+            mode: .init(type: "in_person"),
             participants: .init(
                 hostName: "Host",
                 attendeesExpected: 2,
