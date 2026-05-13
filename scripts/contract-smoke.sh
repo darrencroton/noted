@@ -207,14 +207,14 @@ required = [
     session / "manifest.json",
     session / "runtime/status.json",
     session / "logs/noted.log",
-    session / "audio/raw_room.wav",
+    session / "audio/raw_mic.wav",
     session / "transcript/transcript.txt",
     session / "transcript/transcript.json",
     session / "outputs/completion.json",
 ]
 missing = [str(path) for path in required if not path.exists()]
 assert not missing, missing
-assert (session / "audio/raw_room.wav").stat().st_size > 0
+assert (session / "audio/raw_mic.wav").stat().st_size > 0
 
 status = json.load(open(session / "runtime/status.json", "r", encoding="utf-8"))
 assert status["status"] in {"completed", "completed_with_warnings", "failed"}, status
