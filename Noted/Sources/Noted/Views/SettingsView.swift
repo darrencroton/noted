@@ -1,8 +1,10 @@
+import CoreGraphics
 import SwiftUI
 
 struct SettingsView: View {
     @Bindable var settings: AppSettings
     @State private var isShowingResetConfirmation = false
+    @State private var screenRecordingGranted = CGPreflightScreenCaptureAccess()
     private let labelWidth: CGFloat = 240
     private let controlWidth: CGFloat = 320
 
@@ -49,6 +51,28 @@ struct SettingsView: View {
                         }
                     }
                     .labelsHidden()
+                    .frame(width: controlWidth, alignment: .leading)
+                }
+
+                GridRow {
+                    Text("Screen Recording")
+                        .frame(width: labelWidth, alignment: .trailing)
+                    HStack(spacing: 10) {
+                        if screenRecordingGranted {
+                            Label("Granted", systemImage: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                        } else {
+                            Label("Not granted — system audio will not be captured", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundStyle(.orange)
+                            Button("Open System Settings") {
+                                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                    }
+                    .font(.caption)
                     .frame(width: controlWidth, alignment: .leading)
                 }
 
@@ -107,9 +131,10 @@ struct SettingsView: View {
         }
         .padding(.horizontal, 22)
         .padding(.vertical, 26)
-        .frame(minWidth: 650, minHeight: 310)
+        .frame(minWidth: 650, minHeight: 350)
         .onAppear {
             settings.refreshInputDevices()
+            screenRecordingGranted = CGPreflightScreenCaptureAccess()
         }
         .alert("Reset settings?", isPresented: $isShowingResetConfirmation) {
             Button("Cancel", role: .cancel) {}

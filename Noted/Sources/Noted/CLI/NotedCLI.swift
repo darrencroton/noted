@@ -734,6 +734,16 @@ struct NotedCLI {
                 return 4
             }
 
+            if descriptor.capturesSystemAudio {
+                if transcriptionEngine.systemAudioStarted {
+                    appendLog(sessionDir: sessionDir, "system audio capture: started")
+                } else {
+                    let reason = transcriptionEngine.systemAudioFailureReason ?? "unknown error"
+                    appendLog(sessionDir: sessionDir, "system audio capture: FAILED — \(reason)")
+                    appendLog(sessionDir: sessionDir, "recording continues with microphone only")
+                }
+            }
+
             playRecordingBell()
             startedAtString = ISO8601.withOffset(startedAt)
 
@@ -945,6 +955,10 @@ struct NotedCLI {
         let audioOK = FileManager.default.fileExists(atPath: descriptor.microphoneAudioURL.path)
             || FileManager.default.fileExists(atPath: descriptor.systemAudioURL.path)
         var transcriptOK = false
+
+        if descriptor.capturesSystemAudio && !FileManager.default.fileExists(atPath: descriptor.systemAudioURL.path) {
+            warnings.append("system_audio_missing")
+        }
 
         // Include a warning when switch-next found the next manifest had been invalidated.
         if FileManager.default.fileExists(atPath: RuntimeFiles.nextManifestMissingURL(sessionDir: descriptor.directory).path) {
@@ -1188,8 +1202,9 @@ struct NotedCLI {
         process.arguments = ["__run-session", "--manifest", manifestPath]
         IntegrationProcessEnvironment.configureBriefingScopedProcess(process, sessionDir: sessionDir)
         let logURL = sessionDir.appendingPathComponent("logs/noted.log")
-        let logHandle = try FileHandle(forWritingTo: logURL)
-        logHandle.seekToEndOfFile()
+        let fd = open(logURL.path, O_WRONLY | O_APPEND)
+        guard fd >= 0 else { throw CLIError("cannot open log for appending: \(logURL.path)") }
+        let logHandle = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
         process.standardOutput = logHandle
         process.standardError = logHandle
         try process.run()

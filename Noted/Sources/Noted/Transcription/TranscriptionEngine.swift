@@ -55,6 +55,8 @@ final class TranscriptionEngine {
     private var sysTask: Task<Void, Never>?
 
     private(set) var selectedModel: TranscriptionModel = .parakeet
+    private(set) var systemAudioStarted = false
+    private(set) var systemAudioFailureReason: String? = nil
 
     private var asrManager: AsrManager?
     private var whisperKitBackend: WhisperKitASRBackend?
@@ -175,8 +177,9 @@ final class TranscriptionEngine {
                 sysTask = Task.detached {
                     for await _ in sysStreams.systemAudio {}
                 }
+                systemAudioStarted = true
             } catch {
-                lastError = "Failed to start system audio capture: \(error.localizedDescription)"
+                systemAudioFailureReason = "System audio capture failed: \(error.localizedDescription). Grant Screen Recording access in System Settings → Privacy & Security → Screen Recording."
             }
         }
 
@@ -196,6 +199,8 @@ final class TranscriptionEngine {
         currentRawMicrophoneAudioURL = nil
         isCapturePaused = false
         isRunning = false
+        systemAudioStarted = false
+        systemAudioFailureReason = nil
         assetStatus = "Ready"
         return systemAudioURL
     }

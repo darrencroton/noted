@@ -69,6 +69,7 @@ final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate,
 
         _stream.withLock { $0 = scStream }
         try await scStream.startCapture()
+        print("[SYS] ScreenCaptureKit stream started")
 
         return CaptureStreams(systemAudio: sysStream)
     }
