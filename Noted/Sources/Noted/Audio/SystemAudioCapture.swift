@@ -27,7 +27,7 @@ final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate,
 
     /// Start capturing system audio. Pass a bundle ID to filter to a specific app.
     func bufferStream(appBundleID: String? = nil, rawAudioURL: URL? = nil) async throws -> CaptureStreams {
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        let content = try await loadShareableContent()
 
         guard let display = content.displays.first else {
             throw CaptureError.noDisplay
@@ -72,6 +72,20 @@ final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate,
         print("[SYS] ScreenCaptureKit stream started")
 
         return CaptureStreams(systemAudio: sysStream)
+    }
+
+    private func loadShareableContent() async throws -> SCShareableContent {
+        for attempt in 1...3 {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            guard content.displays.isEmpty else { return content }
+
+            diagLog("[SYS-FILTER] ScreenCaptureKit returned no displays (attempt \(attempt)/3, apps=\(content.applications.count), windows=\(content.windows.count))")
+            if attempt < 3 {
+                try await Task.sleep(nanoseconds: 300_000_000)
+            }
+        }
+
+        throw CaptureError.noDisplay
     }
 
     func pause() {
@@ -160,7 +174,14 @@ final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate,
         return sqrt(sum / Float(frameLength))
     }
 
-    enum CaptureError: Error {
+    enum CaptureError: LocalizedError {
         case noDisplay
+
+        var errorDescription: String? {
+            switch self {
+            case .noDisplay:
+                "ScreenCaptureKit returned no displays for system-audio capture"
+            }
+        }
     }
 }

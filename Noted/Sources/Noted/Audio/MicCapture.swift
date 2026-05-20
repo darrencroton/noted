@@ -58,32 +58,13 @@ final class MicCapture: @unchecked Sendable {
             }
 
             let inputNode = self.engine.inputNode
-            let format = inputNode.inputFormat(forBus: 0)
-            // ^^ change based on https://github.com/Gremble-io/tome-app/pull/28
-            // outputFormat can report sampleRate=0 / channelCount=0 on first access before the
-            // engine is started (e.g. immediately after permission is granted on first run).
-            // Fall back to a standard format — AVAudioEngine will convert from the real device
-            // format when the engine starts.
-            let tapSampleRate = format.sampleRate > 0 ? format.sampleRate : 44100
-            let tapChannels: AVAudioChannelCount = format.channelCount > 0 ? format.channelCount : 1
-            diagLog("[MIC-3] inputNode format: sr=\(format.sampleRate) ch=\(format.channelCount) → using sr=\(tapSampleRate) ch=\(tapChannels)")
-
-            guard let tapFormat = AVAudioFormat(
-                standardFormatWithSampleRate: tapSampleRate,
-                channels: tapChannels
-            ) else {
-                let msg = "Failed to build tap format (sr=\(tapSampleRate) ch=\(tapChannels))"
-                diagLog("[MIC-4-FAIL] \(msg)")
-                errorHolder.value = msg
-                continuation.finish()
-                return
-            }
-
-            diagLog("[MIC-4] tapFormat: sr=\(tapFormat.sampleRate) ch=\(tapFormat.channelCount)")
+            let inputFormat = inputNode.inputFormat(forBus: 0)
+            let outputFormat = inputNode.outputFormat(forBus: 0)
+            diagLog("[MIC-3] inputNode inputFormat: sr=\(inputFormat.sampleRate) ch=\(inputFormat.channelCount); outputFormat: sr=\(outputFormat.sampleRate) ch=\(outputFormat.channelCount)")
 
             let muted = _muted
             var tapCallCount = 0
-            inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { buffer, _ in
+            inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
                 guard !muted.value else { level.value = 0; return }
                 tapCallCount += 1
                 let rms = Self.normalizedRMS(from: buffer)
@@ -95,7 +76,7 @@ final class MicCapture: @unchecked Sendable {
 
                 self._audioFileWriter.withLock { writer in
                     if writer == nil, let rawAudioURL = self._rawAudioURL.withLock({ $0 }) {
-                        writer = try? AVAudioFile(forWriting: rawAudioURL, settings: tapFormat.settings)
+                        writer = try? AVAudioFile(forWriting: rawAudioURL, settings: buffer.format.settings)
                     }
                     try? writer?.write(from: buffer)
                 }

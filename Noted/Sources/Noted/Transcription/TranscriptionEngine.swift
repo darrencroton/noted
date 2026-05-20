@@ -158,10 +158,12 @@ final class TranscriptionEngine {
 
         isRunning = true
         assetStatus = "Recording"
-        userSelectedDeviceID = inputDeviceID
         currentRawMicrophoneAudioURL = rawMicrophoneAudioURL
 
         let targetMicID = inputDeviceID > 0 ? inputDeviceID : MicCapture.defaultInputDeviceID()
+        // Pin the resolved device for this capture. Headphone changes often update the
+        // system default input; following that mid-session risks losing a valid recording.
+        userSelectedDeviceID = targetMicID ?? inputDeviceID
         currentMicDeviceID = targetMicID ?? 0
         let micStream = micCapture.bufferStream(deviceID: targetMicID, rawAudioURL: rawMicrophoneAudioURL)
         micTask = Task.detached {
@@ -179,7 +181,7 @@ final class TranscriptionEngine {
                 }
                 systemAudioStarted = true
             } catch {
-                systemAudioFailureReason = "System audio capture failed: \(error.localizedDescription). Grant Screen Recording access in System Settings → Privacy & Security → Screen Recording."
+                systemAudioFailureReason = systemAudioFailureMessage(for: error)
             }
         }
 
@@ -322,6 +324,13 @@ final class TranscriptionEngine {
             assetStatus = "Ready"
             return false
         }
+    }
+
+    private func systemAudioFailureMessage(for error: any Error) -> String {
+        if let captureError = error as? SystemAudioCapture.CaptureError {
+            return "System audio capture failed: \(captureError.localizedDescription)."
+        }
+        return "System audio capture failed: \(error.localizedDescription). Grant Screen Recording access in System Settings → Privacy & Security → Screen Recording."
     }
 
     private func restartMic(inputDeviceID: AudioDeviceID) {
