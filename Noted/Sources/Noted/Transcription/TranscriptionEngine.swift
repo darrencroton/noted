@@ -64,6 +64,7 @@ final class TranscriptionEngine {
 
     private var currentMicDeviceID: AudioDeviceID = 0
     private var userSelectedDeviceID: AudioDeviceID = 0
+    private var followsDefaultInputDevice = false
     private var currentRawMicrophoneAudioURL: URL?
     private var isCapturePaused = false
     private var defaultDeviceListenerBlock: AudioObjectPropertyListenerBlock?
@@ -161,11 +162,19 @@ final class TranscriptionEngine {
         currentRawMicrophoneAudioURL = rawMicrophoneAudioURL
 
         let targetMicID = inputDeviceID > 0 ? inputDeviceID : MicCapture.defaultInputDeviceID()
-        // Pin the resolved device for this capture. Headphone changes often update the
-        // system default input; following that mid-session risks losing a valid recording.
-        userSelectedDeviceID = targetMicID ?? inputDeviceID
+        followsDefaultInputDevice = inputDeviceID == 0
+        userSelectedDeviceID = inputDeviceID
         currentMicDeviceID = targetMicID ?? 0
         let micStream = micCapture.bufferStream(deviceID: targetMicID, rawAudioURL: rawMicrophoneAudioURL)
+        if let captureError = micCapture.captureError {
+            lastError = captureError
+            assetStatus = "Ready"
+            currentRawMicrophoneAudioURL = nil
+            currentMicDeviceID = 0
+            followsDefaultInputDevice = false
+            isRunning = false
+            return
+        }
         micTask = Task.detached {
             for await _ in micStream {}
         }
@@ -198,6 +207,8 @@ final class TranscriptionEngine {
         await systemCapture.stop()
         micCapture.stop()
         currentMicDeviceID = 0
+        userSelectedDeviceID = 0
+        followsDefaultInputDevice = false
         currentRawMicrophoneAudioURL = nil
         isCapturePaused = false
         isRunning = false
@@ -336,13 +347,21 @@ final class TranscriptionEngine {
     private func restartMic(inputDeviceID: AudioDeviceID) {
         guard isRunning else { return }
 
-        if inputDeviceID != 0 || userSelectedDeviceID != 0 {
+        if inputDeviceID != 0 || !followsDefaultInputDevice {
             userSelectedDeviceID = inputDeviceID
+            followsDefaultInputDevice = inputDeviceID == 0
         }
 
         let targetMicID = inputDeviceID > 0 ? inputDeviceID : MicCapture.defaultInputDeviceID()
         let resolvedTarget = targetMicID ?? 0
         guard resolvedTarget != currentMicDeviceID else { return }
+
+        let resolvedName = resolvedTarget > 0
+            ? (MicCapture.deviceName(for: resolvedTarget) ?? "<unknown>")
+            : "<none>"
+        let switchMessage = "[MIC-SWITCH] restarting mic input_device_id=\(resolvedTarget) input_device_name=\(resolvedName) followsDefault=\(followsDefaultInputDevice)"
+        print(switchMessage)
+        diagLog(switchMessage)
 
         micTask?.cancel()
         micTask = nil
@@ -350,6 +369,11 @@ final class TranscriptionEngine {
         currentMicDeviceID = resolvedTarget
 
         let stream = micCapture.bufferStream(deviceID: targetMicID, rawAudioURL: currentRawMicrophoneAudioURL)
+        if let captureError = micCapture.captureError {
+            lastError = captureError
+            diagLog("[MIC-SWITCH-FAIL] \(captureError)")
+            return
+        }
         micTask = Task.detached {
             for await _ in stream {}
         }
@@ -368,7 +392,7 @@ final class TranscriptionEngine {
         let block: AudioObjectPropertyListenerBlock = { [weak self] _, _ in
             guard let self else { return }
             Task { @MainActor in
-                guard self.isRunning, self.userSelectedDeviceID == 0 else { return }
+                guard self.isRunning, self.followsDefaultInputDevice else { return }
                 self.restartMic(inputDeviceID: 0)
             }
         }

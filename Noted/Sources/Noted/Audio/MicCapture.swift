@@ -4,12 +4,19 @@ import Foundation
 import os
 
 final class MicCapture: @unchecked Sendable {
-    private let engine = AVAudioEngine()
+    private var engine = AVAudioEngine()
     private let _audioLevel = AudioLevel()
     private let _error = SyncString()
     private let _muted = AtomicBool()
-    private let _audioFileWriter = OSAllocatedUnfairLock<AVAudioFile?>(uncheckedState: nil)
+    private let _writerState = OSAllocatedUnfairLock<WriterState>(uncheckedState: WriterState())
     private let _rawAudioURL = OSAllocatedUnfairLock<URL?>(uncheckedState: nil)
+
+    private struct WriterState {
+        var file: AVAudioFile?
+        var converter: AVAudioConverter?
+        var converterInputFormat: AVAudioFormat?
+        var writeFailureCount = 0
+    }
 
     var audioLevel: Float { _audioLevel.value }
     var captureError: String? { _error.value }
@@ -27,7 +34,7 @@ final class MicCapture: @unchecked Sendable {
             let previousRawAudioURL = self._rawAudioURL.withLock { $0 }
             self._rawAudioURL.withLock { $0 = rawAudioURL }
             if previousRawAudioURL != rawAudioURL {
-                self._audioFileWriter.withLock { $0 = nil }
+                self._writerState.withLock { $0 = WriterState() }
             }
 
             diagLog("[MIC-1] bufferStream called, deviceID=\(String(describing: deviceID))")
@@ -62,9 +69,27 @@ final class MicCapture: @unchecked Sendable {
             let outputFormat = inputNode.outputFormat(forBus: 0)
             diagLog("[MIC-3] inputNode inputFormat: sr=\(inputFormat.sampleRate) ch=\(inputFormat.channelCount); outputFormat: sr=\(outputFormat.sampleRate) ch=\(outputFormat.channelCount)")
 
+            let sourceFormat = inputFormat.sampleRate > 0 && inputFormat.channelCount > 0
+                ? inputFormat
+                : outputFormat
+            let tapSampleRate = sourceFormat.sampleRate > 0 ? sourceFormat.sampleRate : 44100
+            let tapChannels = sourceFormat.channelCount > 0 ? sourceFormat.channelCount : 1
+            guard let tapFormat = AVAudioFormat(
+                standardFormatWithSampleRate: tapSampleRate,
+                channels: tapChannels
+            ) else {
+                let msg = "Failed to build tap format (sr=\(tapSampleRate) ch=\(tapChannels))"
+                diagLog("[MIC-4-FAIL] \(msg)")
+                errorHolder.value = msg
+                continuation.finish()
+                return
+            }
+            let writerFormat = self._writerState.withLock { $0.file?.processingFormat }
+            diagLog("[MIC-4] tapFormat: sr=\(tapFormat.sampleRate) ch=\(tapFormat.channelCount) existingWriterFormat=\(String(describing: writerFormat))")
+
             let muted = _muted
             var tapCallCount = 0
-            inputNode.installTap(onBus: 0, bufferSize: 4096, format: nil) { buffer, _ in
+            inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { buffer, _ in
                 guard !muted.value else { level.value = 0; return }
                 tapCallCount += 1
                 let rms = Self.normalizedRMS(from: buffer)
@@ -74,11 +99,19 @@ final class MicCapture: @unchecked Sendable {
                     diagLog("[MIC-6] tap #\(tapCallCount): frames=\(buffer.frameLength) rms=\(rms) level=\(level.value)")
                 }
 
-                self._audioFileWriter.withLock { writer in
-                    if writer == nil, let rawAudioURL = self._rawAudioURL.withLock({ $0 }) {
-                        writer = try? AVAudioFile(forWriting: rawAudioURL, settings: buffer.format.settings)
+                self._writerState.withLock { state in
+                    if state.file == nil, let rawAudioURL = self._rawAudioURL.withLock({ $0 }) {
+                        state.file = try? AVAudioFile(forWriting: rawAudioURL, settings: buffer.format.settings)
                     }
-                    try? writer?.write(from: buffer)
+                    guard let writer = state.file else { return }
+                    do {
+                        try Self.write(buffer, to: writer, state: &state)
+                    } catch {
+                        state.writeFailureCount += 1
+                        if state.writeFailureCount <= 5 || state.writeFailureCount % 100 == 0 {
+                            diagLog("[MIC-WRITE-FAIL] #\(state.writeFailureCount): \(error.localizedDescription)")
+                        }
+                    }
                 }
 
                 continuation.yield(buffer)
@@ -94,6 +127,11 @@ final class MicCapture: @unchecked Sendable {
             } catch {
                 let msg = "Mic failed: \(error.localizedDescription)"
                 print("[MIC-8-FAIL] \(msg)")
+                self.engine.inputNode.removeTap(onBus: 0)
+                self.engine.stop()
+                self.engine.reset()
+                self._writerState.withLock { $0 = WriterState() }
+                self._rawAudioURL.withLock { $0 = nil }
                 errorHolder.value = msg
                 continuation.finish()
             }
@@ -113,16 +151,18 @@ final class MicCapture: @unchecked Sendable {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         engine.reset()
-        _audioFileWriter.withLock { $0 = nil }
+        _writerState.withLock { $0 = WriterState() }
         _rawAudioURL.withLock { $0 = nil }
         _audioLevel.value = 0
     }
 
-    /// Like stop(), but skips engine.reset() so the AUHAL stays initialized.
-    /// Use this before a mid-session device switch so AudioUnitSetProperty works reliably.
+    /// Use this before a mid-session device switch. Hardware format changes can leave
+    /// AVAudioEngine's input node carrying stale formats, so the next capture gets a fresh engine.
     func stopForSwitch() {
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
+        engine.reset()
+        engine = AVAudioEngine()
         _audioLevel.value = 0
     }
 
@@ -173,6 +213,67 @@ final class MicCapture: @unchecked Sendable {
         }
 
         return 0
+    }
+
+    private static func write(_ buffer: AVAudioPCMBuffer, to writer: AVAudioFile, state: inout WriterState) throws {
+        let targetFormat = writer.processingFormat
+        guard !formatsMatch(buffer.format, targetFormat) else {
+            try writer.write(from: buffer)
+            return
+        }
+
+        if state.converter == nil || state.converterInputFormat.map({ !formatsMatch($0, buffer.format) }) != false {
+            state.converter = AVAudioConverter(from: buffer.format, to: targetFormat)
+            state.converterInputFormat = buffer.format
+        }
+
+        guard let converter = state.converter else {
+            throw MicCaptureError("Failed to create converter from \(buffer.format) to \(targetFormat)")
+        }
+
+        let ratio = targetFormat.sampleRate / buffer.format.sampleRate
+        let frameCapacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * ratio)) + 32
+        guard let converted = AVAudioPCMBuffer(pcmFormat: targetFormat, frameCapacity: max(frameCapacity, 1)) else {
+            throw MicCaptureError("Failed to allocate converted mic buffer")
+        }
+
+        let consumedInput = OSAllocatedUnfairLock<Bool>(uncheckedState: false)
+        var conversionError: NSError?
+        let status = converter.convert(to: converted, error: &conversionError) { _, outStatus in
+            let alreadyConsumed = consumedInput.withLock { value in
+                if value { return true }
+                value = true
+                return false
+            }
+            if alreadyConsumed {
+                outStatus.pointee = .noDataNow
+                return nil
+            }
+            outStatus.pointee = .haveData
+            return buffer
+        }
+
+        if let conversionError {
+            throw conversionError
+        }
+
+        switch status {
+        case .haveData, .inputRanDry, .endOfStream:
+            if converted.frameLength > 0 {
+                try writer.write(from: converted)
+            }
+        case .error:
+            throw MicCaptureError("Mic buffer conversion failed")
+        @unknown default:
+            throw MicCaptureError("Unexpected mic buffer conversion status")
+        }
+    }
+
+    private static func formatsMatch(_ lhs: AVAudioFormat, _ rhs: AVAudioFormat) -> Bool {
+        lhs.sampleRate == rhs.sampleRate
+            && lhs.channelCount == rhs.channelCount
+            && lhs.commonFormat == rhs.commonFormat
+            && lhs.isInterleaved == rhs.isInterleaved
     }
 
     private static func rms(
@@ -304,6 +405,16 @@ final class MicCapture: @unchecked Sendable {
         // 0 == kAudioDeviceUnknown — no default device configured
         return (status == noErr && deviceID != 0) ? deviceID : nil
     }
+}
+
+private struct MicCaptureError: LocalizedError {
+    let message: String
+
+    init(_ message: String) {
+        self.message = message
+    }
+
+    var errorDescription: String? { message }
 }
 
 // Thread-safe audio level

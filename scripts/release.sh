@@ -15,6 +15,10 @@ BINARY_PATH=".build/release/$APP_NAME"
 ICON_PATH="$SWIFT_DIR/Sources/Noted/Assets/AppIcon.icns"
 
 DEVELOPER_ID=$(security find-identity -v -p codesigning 2>/dev/null | grep "Developer ID Application" | head -1 | awk '{print $2}' || true)
+LOCAL_SIGN_IDENTITY="${NOTED_CODESIGN_IDENTITY:-}"
+if [[ -z "$LOCAL_SIGN_IDENTITY" && "${1:-}" == "test" ]]; then
+  LOCAL_SIGN_IDENTITY=$(security find-identity -v -p codesigning 2>/dev/null | awk '/[0-9A-F]{40}/ { print $2; exit }' || true)
+fi
 
 cd "$SWIFT_DIR"
 swift build -c release
@@ -52,8 +56,23 @@ if [[ -n "$DEVELOPER_ID" ]]; then
     --entitlements "$ENTITLEMENTS" \
     --sign "$DEVELOPER_ID" \
     "$APP_BUNDLE"
+elif [[ -n "$LOCAL_SIGN_IDENTITY" ]]; then
+  echo "No Developer ID certificate found; signing test app bundle with local identity $LOCAL_SIGN_IDENTITY."
+  find "$APP_BUNDLE" -type f \( -name "*.dylib" -o -name "*.framework" -o -name "*.so" \) -print0 | xargs -0 -I {} \
+    codesign --force --options runtime --sign "$LOCAL_SIGN_IDENTITY" "{}"
+
+  codesign --force --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    --sign "$LOCAL_SIGN_IDENTITY" \
+    "$APP_BUNDLE"
 else
-  echo "No Developer ID certificate found; leaving app bundle unsigned."
+  echo "No Developer ID certificate found; ad-hoc signing app bundle with local entitlements."
+  echo "WARNING: macOS TCC permissions for ad-hoc signed builds are tied to this build hash."
+  echo "WARNING: Rebuilds may require resetting/re-granting Screen Recording permission, or signing with a stable certificate."
+  codesign --force --options runtime \
+    --entitlements "$ENTITLEMENTS" \
+    --sign - \
+    "$APP_BUNDLE"
 fi
 
 hdiutil create -volname "$APP_NAME" -srcfolder "$APP_BUNDLE" -ov -format UDZO "$DMG_NAME"
