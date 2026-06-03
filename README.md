@@ -21,12 +21,13 @@ On a normal day you don't touch `noted` at all. On an unusual day — a conversa
 Build and launch the app bundle:
 
 ```bash
-cd Noted
-swift build
-cd ..
 ./scripts/release.sh test
 open dist/Noted.app
 ```
+
+The script handles the Swift build (`swift build -c release`) and assembles the signed app bundle in `dist/Noted.app`. Run it from the project root (the directory containing `Noted/` and `scripts/`).
+
+**Signing and Screen Recording permission.** If you have a codesigning certificate (check with `security find-identity -v -p codesigning`), the script signs with it automatically and macOS TCC tracks the app by identity — Screen Recording permission survives rebuilds. Without any certificate the script falls back to ad-hoc signing, which ties the TCC grant to the binary hash; every rebuild produces a new hash and macOS stops recognising the app, so the permission appears to disappear. Fix: in Xcode → Settings → Accounts → Manage Certificates, add an **Apple Development** certificate, then re-run the script.
 
 The menubar icon appears. Microphone permission is not requested at launch — macOS asks when the first recording starts.
 
@@ -223,6 +224,49 @@ uv run briefing session-reprocess --session-dir /path/to/session
 **Session shows warnings in the menubar**
 
 Read `outputs/completion.json` and `logs/noted.log`. A diarization failure (`diarization_ok: false`) is non-fatal — the summary will use speaker-agnostic language. An ASR failure will need reprocessing.
+
+**Screen Recording permission not sticking / app keeps asking for permission**
+
+This happens when the app has been built with an ad-hoc signature (no stable signing identity). Each rebuild produces a new binary hash and macOS treats it as an unknown app, invalidating any previously granted permission.
+
+First verify you have a valid codesigning identity:
+
+```bash
+security find-identity -v -p codesigning
+```
+
+If this returns `0 valid identities found`, you need to install a signing certificate before building:
+
+1. Install the WWDR G3 intermediate certificate (required for any Apple Development cert issued after 2021):
+
+```bash
+curl -O https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+open AppleWWDRCAG3.cer
+```
+
+Add it to the **login** keychain when prompted.
+
+2. Create an Apple Development certificate in Xcode → Settings → Apple Accounts → select your Apple ID → **Manage Certificates...** → **+** → **Apple Development**.
+
+3. Confirm the identity is now valid:
+
+```bash
+security find-identity -v -p codesigning
+```
+
+4. Rebuild and relaunch:
+
+```bash
+./scripts/release.sh test && open dist/Noted.app
+```
+
+The script will now sign with the stable identity. Once rebuilt, you need to clear the stale TCC entry that macOS holds for the old ad-hoc binary — otherwise the System Settings toggle appears ON but applies to a different binary hash and the new build is still denied:
+
+```bash
+tccutil reset ScreenCapture app.noted.macos
+```
+
+Relaunch the app, click **Open System Settings** in the permission dialog, and toggle `noted` on. The grant is now tied to your stable signing identity and will survive future rebuilds.
 
 ## Credits
 
