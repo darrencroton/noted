@@ -68,10 +68,39 @@ final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate,
         }
 
         _stream.withLock { $0 = scStream }
-        try await scStream.startCapture()
+        do {
+            try await startCaptureWithTimeout(scStream, seconds: 10)
+        } catch {
+            _stream.withLock { $0 = nil }
+            _sysContinuation.withLock { $0?.finish(); $0 = nil }
+            throw error
+        }
         print("[SYS] ScreenCaptureKit stream started")
 
         return CaptureStreams(systemAudio: sysStream)
+    }
+
+    // Wraps SCStream.startCapture() with a hard deadline. ScreenCaptureKit can silently
+    // hang (continuation never resumed) when a new stream is started while the previous
+    // session's stream teardown is still in flight on the OS side. Without this guard the
+    // startup timeout is 90 s (enforced by the parent process), which fails the entire
+    // session. With the timeout here we get a clean CaptureError that lets the session
+    // fall back to mic-only capture.
+    private func startCaptureWithTimeout(_ stream: SCStream, seconds: Double) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await stream.startCapture() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw CaptureError.startupTimeout
+            }
+            do {
+                try await group.next()!
+            } catch {
+                group.cancelAll()
+                throw error
+            }
+            group.cancelAll()
+        }
     }
 
     private func loadShareableContent() async throws -> SCShareableContent {
@@ -176,11 +205,14 @@ final class SystemAudioCapture: NSObject, @unchecked Sendable, SCStreamDelegate,
 
     enum CaptureError: LocalizedError {
         case noDisplay
+        case startupTimeout
 
         var errorDescription: String? {
             switch self {
             case .noDisplay:
                 "ScreenCaptureKit returned no displays for system-audio capture"
+            case .startupTimeout:
+                "System audio capture timed out during startup — recording will continue with microphone only"
             }
         }
     }

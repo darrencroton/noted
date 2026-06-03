@@ -107,6 +107,8 @@ struct NotedCLI {
             return await wait(options: options)
         case "__run-session":
             return await runSession(options: options)
+        case "post-process":
+            return await postProcessSession(options: options)
         default:
             writeError("unknown command: \(command)")
             writeJSON(["ok": false, "error": "unknown_command"])
@@ -1047,6 +1049,67 @@ struct NotedCLI {
             sessionDir: descriptor.directory,
             terminalStatus: terminalStatus
         )
+    }
+
+    /// Recovery command: run transcription + diarization on a session that has captured audio
+    /// but no transcript (e.g. after a startup_failure). Writes transcript, diarization, and
+    /// completion.json, then triggers the normal briefing ingest handoff.
+    @MainActor
+    private func postProcessSession(options: [String: String]) async -> Int {
+        guard let sessionDirPath = options["session-dir"] else {
+            writeError("missing --session-dir <path>")
+            writeJSON(["ok": false, "error": "missing_session_dir"])
+            return 2
+        }
+
+        let sessionDir = URL(fileURLWithPath: sessionDirPath, isDirectory: true)
+        let manifestURL = sessionDir.appendingPathComponent("manifest.json")
+
+        let validation = ManifestValidator.validate(fileURL: manifestURL)
+        guard validation.isValid, let manifest = validation.manifest else {
+            writeJSON([
+                "ok": false,
+                "schema_version": validation.schemaVersion as Any,
+                "errors": validation.errors,
+            ])
+            return 4
+        }
+
+        let descriptor = SessionDescriptor(
+            id: manifest.sessionID,
+            directory: sessionDir,
+            type: .meeting,
+            startedAt: Date(),
+            modeType: manifest.mode.type
+        )
+
+        let settings = RuntimeSettings.load()
+        let transcriptionEngine = TranscriptionEngine()
+        transcriptionEngine.setModel(transcriptionModel(for: manifest, settings: settings))
+
+        appendLog(sessionDir: sessionDir, "post-process: loading models")
+        await transcriptionEngine.downloadModels()
+
+        appendLog(sessionDir: sessionDir, "post-process: running transcription and diarization")
+        do {
+            try await postProcess(
+                manifest: manifest,
+                descriptor: descriptor,
+                transcriptionEngine: transcriptionEngine,
+                startedAt: nil,
+                stopReason: "startup_failure",
+                scheduledEndTime: manifest.meeting.scheduledEndTime,
+                currentExtensionMinutes: 0
+            )
+        } catch {
+            appendLog(sessionDir: sessionDir, "post-process: failed — \(error.localizedDescription)")
+            writeJSON(["ok": false, "session_id": manifest.sessionID, "error": error.localizedDescription])
+            return 6
+        }
+
+        appendLog(sessionDir: sessionDir, "post-process: complete")
+        writeJSON(["ok": true, "session_id": manifest.sessionID, "session_dir": sessionDir.path])
+        return 0
     }
 
     private func writeStartupFailure(manifest: SessionManifest, sessionDir: URL, message: String) async throws {
