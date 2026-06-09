@@ -175,9 +175,7 @@ final class TranscriptionEngine {
             isRunning = false
             return
         }
-        micTask = Task.detached {
-            for await _ in micStream {}
-        }
+        micTask = makeMicTask(stream: micStream)
 
         if captureSystemAudio {
             do {
@@ -371,14 +369,37 @@ final class TranscriptionEngine {
         let stream = micCapture.bufferStream(deviceID: targetMicID, rawAudioURL: currentRawMicrophoneAudioURL)
         if let captureError = micCapture.captureError {
             lastError = captureError
-            diagLog("[MIC-SWITCH-FAIL] \(captureError)")
+            diagLog("[MIC-SWITCH-FAIL] \(captureError), retrying in 2s")
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard let self, self.isRunning else { return }
+                // Reset currentMicDeviceID so the guard below passes on retry.
+                self.currentMicDeviceID = 0
+                self.restartMic(inputDeviceID: inputDeviceID)
+            }
             return
         }
-        micTask = Task.detached {
-            for await _ in stream {}
-        }
+        micTask = makeMicTask(stream: stream)
         if isCapturePaused {
             micCapture.pause()
+        }
+    }
+
+    /// Wraps a mic buffer stream in a Task that auto-restarts if the stream ends for a reason
+    /// other than an explicit cancel (i.e. AVAudioEngineConfigurationChange killed the engine).
+    /// Uses Task (not Task.detached) so the stream is consumed on the MainActor; each buffer
+    /// is discarded in O(1) so the overhead is negligible compared to the tap-side writes.
+    private func makeMicTask(stream: AsyncStream<AVAudioPCMBuffer>) -> Task<Void, Never> {
+        Task { [weak self] in
+            for await _ in stream {}
+            guard !Task.isCancelled else { return }
+            // Stream ended unexpectedly — engine likely died due to a device change.
+            guard let self, self.isRunning else { return }
+            diagLog("[MIC-TASK] stream ended without cancellation, scheduling restart in 1s")
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard self.isRunning else { return }
+            self.currentMicDeviceID = 0
+            self.restartMic(inputDeviceID: self.userSelectedDeviceID)
         }
     }
 

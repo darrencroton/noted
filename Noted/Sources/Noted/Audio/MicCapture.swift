@@ -10,6 +10,8 @@ final class MicCapture: @unchecked Sendable {
     private let _muted = AtomicBool()
     private let _writerState = OSAllocatedUnfairLock<WriterState>(uncheckedState: WriterState())
     private let _rawAudioURL = OSAllocatedUnfairLock<URL?>(uncheckedState: nil)
+    // Retained so we can remove it in stopForSwitch/stop; registered against the specific engine instance.
+    private var engineConfigObserver: (any NSObjectProtocol)?
 
     private struct WriterState {
         var file: AVAudioFile?
@@ -124,14 +126,28 @@ final class MicCapture: @unchecked Sendable {
                 diagLog("[MIC-7] engine prepared, starting...")
                 try self.engine.start()
                 diagLog("[MIC-8] engine started successfully, isRunning=\(self.engine.isRunning)")
+                // Detect silent engine death (e.g. device disconnect while running).
+                // Capturing the specific engine instance avoids a use-after-stopForSwitch race.
+                let capturedEngine = self.engine
+                self.engineConfigObserver = NotificationCenter.default.addObserver(
+                    forName: .AVAudioEngineConfigurationChange,
+                    object: capturedEngine,
+                    queue: .main
+                ) { [weak capturedEngine, weak self] _ in
+                    diagLog("[MIC-CONFIG-CHANGE] AVAudioEngineConfigurationChange fired, finishing stream")
+                    capturedEngine?.stop()
+                    self?.engineConfigObserver = nil
+                    continuation.finish()
+                }
             } catch {
                 let msg = "Mic failed: \(error.localizedDescription)"
                 print("[MIC-8-FAIL] \(msg)")
                 self.engine.inputNode.removeTap(onBus: 0)
                 self.engine.stop()
                 self.engine.reset()
-                self._writerState.withLock { $0 = WriterState() }
-                self._rawAudioURL.withLock { $0 = nil }
+                // Do NOT clear _writerState or _rawAudioURL here. The engine failed to start
+                // but the audio file is intact; clearing would cause the next successful restart
+                // to open the file for writing again (truncating it) or lose accumulated audio.
                 errorHolder.value = msg
                 continuation.finish()
             }
@@ -148,6 +164,7 @@ final class MicCapture: @unchecked Sendable {
     }
 
     func stop() {
+        removeEngineConfigObserver()
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         engine.reset()
@@ -159,11 +176,19 @@ final class MicCapture: @unchecked Sendable {
     /// Use this before a mid-session device switch. Hardware format changes can leave
     /// AVAudioEngine's input node carrying stale formats, so the next capture gets a fresh engine.
     func stopForSwitch() {
+        removeEngineConfigObserver()
         engine.inputNode.removeTap(onBus: 0)
         engine.stop()
         engine.reset()
         engine = AVAudioEngine()
         _audioLevel.value = 0
+    }
+
+    private func removeEngineConfigObserver() {
+        if let obs = engineConfigObserver {
+            NotificationCenter.default.removeObserver(obs)
+            engineConfigObserver = nil
+        }
     }
 
     private static func normalizedRMS(from buffer: AVAudioPCMBuffer) -> Float {
