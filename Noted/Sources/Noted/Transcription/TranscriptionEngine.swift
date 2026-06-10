@@ -53,6 +53,7 @@ final class TranscriptionEngine {
 
     private var micTask: Task<Void, Never>?
     private var sysTask: Task<Void, Never>?
+    private var micRestartRetryTask: Task<Void, Never>?
 
     private(set) var selectedModel: TranscriptionModel = .parakeet
     private(set) var systemAudioStarted = false
@@ -164,7 +165,7 @@ final class TranscriptionEngine {
         let targetMicID = inputDeviceID > 0 ? inputDeviceID : MicCapture.defaultInputDeviceID()
         followsDefaultInputDevice = inputDeviceID == 0
         userSelectedDeviceID = inputDeviceID
-        currentMicDeviceID = targetMicID ?? 0
+        currentMicDeviceID = 0
         let micStream = micCapture.bufferStream(deviceID: targetMicID, rawAudioURL: rawMicrophoneAudioURL)
         if let captureError = micCapture.captureError {
             lastError = captureError
@@ -175,7 +176,8 @@ final class TranscriptionEngine {
             isRunning = false
             return
         }
-        micTask = makeMicTask(stream: micStream)
+        currentMicDeviceID = targetMicID ?? 0
+        micTask = drainMicStream(micStream)
 
         if captureSystemAudio {
             do {
@@ -198,8 +200,10 @@ final class TranscriptionEngine {
     func stop() async -> URL? {
         removeDefaultDeviceListener()
         let systemAudioURL = systemCapture.bufferFilePath
+        micRestartRetryTask?.cancel()
         micTask?.cancel()
         sysTask?.cancel()
+        micRestartRetryTask = nil
         micTask = nil
         sysTask = nil
         await systemCapture.stop()
@@ -342,8 +346,12 @@ final class TranscriptionEngine {
         return "System audio capture failed: \(error.localizedDescription). Grant Screen Recording access in System Settings → Privacy & Security → Screen Recording."
     }
 
-    private func restartMic(inputDeviceID: AudioDeviceID) {
+    private func restartMic(inputDeviceID: AudioDeviceID, cancelPendingRetry: Bool = true) {
         guard isRunning else { return }
+        if cancelPendingRetry {
+            micRestartRetryTask?.cancel()
+            micRestartRetryTask = nil
+        }
 
         if inputDeviceID != 0 || !followsDefaultInputDevice {
             userSelectedDeviceID = inputDeviceID
@@ -364,42 +372,39 @@ final class TranscriptionEngine {
         micTask?.cancel()
         micTask = nil
         micCapture.stopForSwitch()
-        currentMicDeviceID = resolvedTarget
+        currentMicDeviceID = 0
 
         let stream = micCapture.bufferStream(deviceID: targetMicID, rawAudioURL: currentRawMicrophoneAudioURL)
         if let captureError = micCapture.captureError {
             lastError = captureError
-            diagLog("[MIC-SWITCH-FAIL] \(captureError), retrying in 2s")
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(nanoseconds: 2_000_000_000)
-                guard let self, self.isRunning else { return }
-                // Reset currentMicDeviceID so the guard below passes on retry.
-                self.currentMicDeviceID = 0
-                self.restartMic(inputDeviceID: inputDeviceID)
-            }
+            let failureMessage = "[MIC-SWITCH-FAIL] \(captureError), retrying in 2s"
+            print(failureMessage)
+            diagLog(failureMessage)
+            scheduleMicRestartRetry(inputDeviceID: inputDeviceID)
             return
         }
-        micTask = makeMicTask(stream: stream)
+        lastError = nil
+        micRestartRetryTask = nil
+        currentMicDeviceID = resolvedTarget
+        micTask = drainMicStream(stream)
         if isCapturePaused {
             micCapture.pause()
         }
     }
 
-    /// Wraps a mic buffer stream in a Task that auto-restarts if the stream ends for a reason
-    /// other than an explicit cancel (i.e. AVAudioEngineConfigurationChange killed the engine).
-    /// Uses Task (not Task.detached) so the stream is consumed on the MainActor; each buffer
-    /// is discarded in O(1) so the overhead is negligible compared to the tap-side writes.
-    private func makeMicTask(stream: AsyncStream<AVAudioPCMBuffer>) -> Task<Void, Never> {
-        Task { [weak self] in
-            for await _ in stream {}
-            guard !Task.isCancelled else { return }
-            // Stream ended unexpectedly — engine likely died due to a device change.
+    private func scheduleMicRestartRetry(inputDeviceID: AudioDeviceID) {
+        micRestartRetryTask?.cancel()
+        micRestartRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
             guard let self, self.isRunning else { return }
-            diagLog("[MIC-TASK] stream ended without cancellation, scheduling restart in 1s")
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            guard self.isRunning else { return }
-            self.currentMicDeviceID = 0
-            self.restartMic(inputDeviceID: self.userSelectedDeviceID)
+            self.micRestartRetryTask = nil
+            self.restartMic(inputDeviceID: inputDeviceID, cancelPendingRetry: false)
+        }
+    }
+
+    private func drainMicStream(_ stream: AsyncStream<AVAudioPCMBuffer>) -> Task<Void, Never> {
+        Task {
+            for await _ in stream {}
         }
     }
 
