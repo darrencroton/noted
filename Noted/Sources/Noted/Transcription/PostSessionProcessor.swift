@@ -7,6 +7,22 @@ struct PostSessionProcessingResult: Sendable {
     let diarizationOK: Bool
     let warnings: [String]
     let errors: [String]
+    let diagnostics: [String]
+}
+
+struct PostSessionRetryPolicy: Sendable {
+    let transcriptionAttempts: Int
+    let retryDelayNanoseconds: UInt64
+
+    static let production = PostSessionRetryPolicy(
+        transcriptionAttempts: 2,
+        retryDelayNanoseconds: 60_000_000_000
+    )
+
+    static let immediate = PostSessionRetryPolicy(
+        transcriptionAttempts: 2,
+        retryDelayNanoseconds: 0
+    )
 }
 
 @MainActor
@@ -15,36 +31,46 @@ protocol PostSessionTranscribing: AnyObject {
 }
 
 @MainActor
+protocol PostSessionTranscriptionRecovering: AnyObject {
+    func resetASRBackendForRetry()
+}
+
+@MainActor
 protocol PostSessionDiarizing: AnyObject {
     func diarizeAudio(audioURL: URL, speakerCountHint: Int?) async -> [DiarizationSegment]?
 }
 
-extension TranscriptionEngine: PostSessionTranscribing, PostSessionDiarizing {}
+extension TranscriptionEngine: PostSessionTranscribing, PostSessionTranscriptionRecovering, PostSessionDiarizing {}
 
 struct PostSessionProcessor {
     private let transcriber: any PostSessionTranscribing
     private let diarizer: any PostSessionDiarizing
     private let writer: FinalTranscriptWriter
+    private let retryPolicy: PostSessionRetryPolicy
     private let sampleRate = 16_000
 
     init(
         transcriber: any PostSessionTranscribing,
         diarizer: any PostSessionDiarizing,
-        writer: FinalTranscriptWriter = FinalTranscriptWriter()
+        writer: FinalTranscriptWriter = FinalTranscriptWriter(),
+        retryPolicy: PostSessionRetryPolicy = .production
     ) {
         self.transcriber = transcriber
         self.diarizer = diarizer
         self.writer = writer
+        self.retryPolicy = retryPolicy
     }
 
     @MainActor
     func process(manifest: SessionManifest, descriptor: SessionDescriptor, locale: Locale) async -> PostSessionProcessingResult {
         var warnings: [String] = []
         var errors: [String] = []
+        var diagnostics: [String] = []
         var finalSegments: [FinalTranscriptSegment] = []
         var finalDiarizationSegments: [DiarizationSegment] = []
         var anyDiarizationSucceeded = false
         var allDiarizedSourcesSucceeded = true
+        var allPresentSourcesTranscribed = true
 
         do {
             try writer.writeMetadata(for: descriptor)
@@ -90,11 +116,20 @@ struct PostSessionProcessor {
                     ? fallbackRanges(sampleCount: audio.source.sampleCount, source: source)
                     : coalescedRanges(normalizedDiarization, source: source)
 
-                for range in transcriptRanges {
-                    guard let segment = try await transcribe(range: range, audio: audio, locale: locale) else { continue }
-                    finalSegments.append(segment)
+                let transcriptionResult = await transcribeSource(
+                    ranges: transcriptRanges,
+                    audio: audio,
+                    source: source,
+                    locale: locale
+                )
+                finalSegments.append(contentsOf: transcriptionResult.segments)
+                diagnostics.append(contentsOf: transcriptionResult.diagnostics)
+                if !transcriptionResult.succeeded {
+                    allPresentSourcesTranscribed = false
+                    errors.append("\(source.warningPrefix)_transcription_failed")
                 }
             } catch {
+                allPresentSourcesTranscribed = false
                 errors.append("\(source.warningPrefix)_transcription_failed")
             }
         }
@@ -108,17 +143,15 @@ struct PostSessionProcessor {
             }
         }
 
+        var transcriptWriteOK = false
         do {
             try writer.writeTranscript(finalSegments, descriptor: descriptor)
+            transcriptWriteOK = true
         } catch {
             errors.append("transcript_write_failed")
         }
 
-        let transcriptOK = FileManager.default.fileExists(
-            atPath: descriptor.transcriptDirectory.appendingPathComponent("transcript.txt").path
-        ) && FileManager.default.fileExists(
-            atPath: descriptor.transcriptDirectory.appendingPathComponent("transcript.json").path
-        )
+        let transcriptOK = transcriptWriteOK && allPresentSourcesTranscribed
         let diarizationOK = manifest.transcription.diarizationEnabled
             && anyDiarizationSucceeded
             && allDiarizedSourcesSucceeded
@@ -127,7 +160,8 @@ struct PostSessionProcessor {
             transcriptOK: transcriptOK,
             diarizationOK: diarizationOK,
             warnings: Array(Set(warnings)).sorted(),
-            errors: Array(Set(errors)).sorted()
+            errors: Array(Set(errors)).sorted(),
+            diagnostics: diagnostics
         )
     }
 
@@ -273,6 +307,59 @@ struct PostSessionProcessor {
             confidence: result.confidence
         )
     }
+
+    @MainActor
+    private func transcribeSource(
+        ranges: [TranscriptRange],
+        audio: LoadedAudio,
+        source: AudioProcessingSource,
+        locale: Locale
+    ) async -> SourceTranscriptionResult {
+        let attempts = max(1, retryPolicy.transcriptionAttempts)
+        var diagnostics: [String] = []
+        var bestSegments: [FinalTranscriptSegment] = []
+
+        for attempt in 1...attempts {
+            if attempt > 1 {
+                diagnostics.append(
+                    "\(source.warningPrefix)_transcription_retry attempt=\(attempt) delay_seconds=\(retryPolicy.retryDelayNanoseconds / 1_000_000_000)"
+                )
+                (transcriber as? any PostSessionTranscriptionRecovering)?.resetASRBackendForRetry()
+                if retryPolicy.retryDelayNanoseconds > 0 {
+                    try? await Task.sleep(nanoseconds: retryPolicy.retryDelayNanoseconds)
+                }
+            }
+
+            var attemptSegments: [FinalTranscriptSegment] = []
+            do {
+                for range in ranges {
+                    guard let segment = try await transcribe(range: range, audio: audio, locale: locale) else { continue }
+                    attemptSegments.append(segment)
+                }
+                diagnostics.append(
+                    "\(source.warningPrefix)_transcription_succeeded attempt=\(attempt) ranges=\(ranges.count) segments=\(attemptSegments.count)"
+                )
+                return SourceTranscriptionResult(
+                    segments: attemptSegments,
+                    succeeded: true,
+                    diagnostics: diagnostics
+                )
+            } catch {
+                if attemptSegments.count > bestSegments.count {
+                    bestSegments = attemptSegments
+                }
+                diagnostics.append(
+                    "\(source.warningPrefix)_transcription_failed attempt=\(attempt) ranges=\(ranges.count) partial_segments=\(attemptSegments.count) error=\(error.localizedDescription)"
+                )
+            }
+        }
+
+        return SourceTranscriptionResult(
+            segments: bestSegments,
+            succeeded: false,
+            diagnostics: diagnostics
+        )
+    }
 }
 
 private struct AudioProcessingSource {
@@ -294,4 +381,10 @@ private struct TranscriptRange {
     let audioSource: AudioSource
     let startTime: Float
     let endTime: Float
+}
+
+private struct SourceTranscriptionResult {
+    let segments: [FinalTranscriptSegment]
+    let succeeded: Bool
+    let diagnostics: [String]
 }

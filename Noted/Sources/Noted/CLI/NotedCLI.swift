@@ -698,6 +698,9 @@ struct NotedCLI {
         )
         let settings = RuntimeSettings.load()
         let transcriptionEngine = TranscriptionEngine()
+        transcriptionEngine.diagnosticHandler = { [self] message in
+            appendLog(sessionDir: sessionDir, message)
+        }
         transcriptionEngine.setModel(transcriptionModel(for: manifest, settings: settings))
 
         var startedAtString: String?
@@ -992,6 +995,9 @@ struct NotedCLI {
             diarizationOK = result.diarizationOK
             warnings.append(contentsOf: result.warnings)
             errors.append(contentsOf: result.errors)
+            for diagnostic in result.diagnostics {
+                appendLog(sessionDir: descriptor.directory, "post-process diagnostic: \(diagnostic)")
+            }
         }
 
         if !audioOK { errors.append("audio_capture_missing") }
@@ -1075,16 +1081,30 @@ struct NotedCLI {
             return 4
         }
 
+        let priorStatus = RuntimeFiles.readStatus(sessionDir: sessionDir)
+        let priorCompletion = readCompletion(sessionDir: sessionDir)
+        let descriptorStartedAt = priorStatus?.startedAt.flatMap(ISO8601.parseDate)
+            ?? ISO8601.parseDate(manifest.meeting.startTime)
+            ?? Date()
+        let startedAtString = priorStatus?.startedAt ?? ISO8601.withOffset(descriptorStartedAt)
+        let stopReason = priorCompletion?.stopReason ?? RuntimeFiles.readStopReason(sessionDir: sessionDir)
+        let scheduledEndTime = priorStatus?.scheduledEndTime ?? manifest.meeting.scheduledEndTime
+        let currentExtensionMinutes = priorStatus?.currentExtensionMinutes ?? 0
+        let preEndPromptShown = priorStatus?.preEndPromptShown ?? false
+
         let descriptor = SessionDescriptor(
             id: manifest.sessionID,
             directory: sessionDir,
             type: .meeting,
-            startedAt: Date(),
+            startedAt: descriptorStartedAt,
             modeType: manifest.mode.type
         )
 
         let settings = RuntimeSettings.load()
         let transcriptionEngine = TranscriptionEngine()
+        transcriptionEngine.diagnosticHandler = { [self] message in
+            appendLog(sessionDir: sessionDir, message)
+        }
         transcriptionEngine.setModel(transcriptionModel(for: manifest, settings: settings))
 
         appendLog(sessionDir: sessionDir, "post-process: loading models")
@@ -1096,10 +1116,11 @@ struct NotedCLI {
                 manifest: manifest,
                 descriptor: descriptor,
                 transcriptionEngine: transcriptionEngine,
-                startedAt: nil,
-                stopReason: "startup_failure",
-                scheduledEndTime: manifest.meeting.scheduledEndTime,
-                currentExtensionMinutes: 0
+                startedAt: startedAtString,
+                stopReason: stopReason,
+                scheduledEndTime: scheduledEndTime,
+                currentExtensionMinutes: currentExtensionMinutes,
+                preEndPromptShown: preEndPromptShown
             )
         } catch {
             appendLog(sessionDir: sessionDir, "post-process: failed — \(error.localizedDescription)")
@@ -1110,6 +1131,12 @@ struct NotedCLI {
         appendLog(sessionDir: sessionDir, "post-process: complete")
         writeJSON(["ok": true, "session_id": manifest.sessionID, "session_dir": sessionDir.path])
         return 0
+    }
+
+    private func readCompletion(sessionDir: URL) -> CompletionFile? {
+        let url = sessionDir.appendingPathComponent("outputs/completion.json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? RuntimeFiles.decoder.decode(CompletionFile.self, from: data)
     }
 
     private func writeStartupFailure(manifest: SessionManifest, sessionDir: URL, message: String) async throws {

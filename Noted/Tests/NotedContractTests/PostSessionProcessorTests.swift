@@ -153,6 +153,50 @@ final class PostSessionProcessorTests: XCTestCase {
         XCTAssertTrue(transcriptText.contains("mic only text"))
     }
 
+    func testTransientTranscriptionFailureRetriesAndKeepsTranscriptOK() async throws {
+        let fixture = try makeSessionFixture(audioDuration: 2.0)
+        let worker = FailingThenRecoveringWorker()
+
+        let result = await PostSessionProcessor(
+            transcriber: worker,
+            diarizer: worker,
+            retryPolicy: .immediate
+        )
+        .process(manifest: fixture.manifest, descriptor: fixture.descriptor, locale: Locale(identifier: "en-AU"))
+
+        XCTAssertTrue(result.transcriptOK)
+        XCTAssertFalse(result.errors.contains("room_transcription_failed"))
+        XCTAssertTrue(result.diagnostics.contains { $0.contains("room_transcription_retry attempt=2") })
+
+        let transcriptText = try String(
+            contentsOf: fixture.descriptor.transcriptDirectory.appendingPathComponent("transcript.txt"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(transcriptText.contains("recovered transcript"))
+    }
+
+    func testPersistentTranscriptionFailureDoesNotReportPartialTranscriptOK() async throws {
+        let fixture = try makeSessionFixture(audioDuration: 3.0)
+        let worker = AlwaysFailsOnSecondRangeWorker()
+
+        let result = await PostSessionProcessor(
+            transcriber: worker,
+            diarizer: worker,
+            retryPolicy: .immediate
+        )
+        .process(manifest: fixture.manifest, descriptor: fixture.descriptor, locale: Locale(identifier: "en-AU"))
+
+        XCTAssertFalse(result.transcriptOK)
+        XCTAssertTrue(result.errors.contains("room_transcription_failed"))
+        XCTAssertTrue(result.diagnostics.contains { $0.contains("room_transcription_failed attempt=2") })
+
+        let transcriptText = try String(
+            contentsOf: fixture.descriptor.transcriptDirectory.appendingPathComponent("transcript.txt"),
+            encoding: .utf8
+        )
+        XCTAssertTrue(transcriptText.contains("partial transcript"))
+    }
+
     func testSpeakerCountHintRetriesWhenInitialDiarizationCollapsesToOneSpeaker() async throws {
         let recorder = DiarizationConfigRecorder()
         let runner = MockDiarizationRunner(
@@ -350,6 +394,10 @@ private struct TestTranscriptDocument: Decodable {
     let segments: [FinalTranscriptSegment]
 }
 
+private struct MockTranscriptionError: LocalizedError {
+    var errorDescription: String? { "mock transcription failure" }
+}
+
 @MainActor
 private final class PerSourceMockDiarizer: PostSessionDiarizing {
     private let segmentsByFilename: [String: [DiarizationSegment]?]
@@ -373,5 +421,47 @@ private final class SequentialMockTranscriber: PostSessionTranscribing {
 
     func transcribeAudio(_ samples: [Float], source: AudioSource, locale: Locale) async throws -> ASRTranscriptResult {
         ASRTranscriptResult(text: texts.removeFirst(), confidence: nil)
+    }
+}
+
+@MainActor
+private final class FailingThenRecoveringWorker: PostSessionTranscribing, PostSessionTranscriptionRecovering, PostSessionDiarizing {
+    private var callCount = 0
+    private(set) var resetCount = 0
+
+    func diarizeAudio(audioURL: URL, speakerCountHint: Int?) async -> [DiarizationSegment]? {
+        nil
+    }
+
+    func transcribeAudio(_ samples: [Float], source: AudioSource, locale: Locale) async throws -> ASRTranscriptResult {
+        callCount += 1
+        if callCount == 1 {
+            throw MockTranscriptionError()
+        }
+        return ASRTranscriptResult(text: "recovered transcript", confidence: nil)
+    }
+
+    func resetASRBackendForRetry() {
+        resetCount += 1
+    }
+}
+
+@MainActor
+private final class AlwaysFailsOnSecondRangeWorker: PostSessionTranscribing, PostSessionDiarizing {
+    private var callCount = 0
+
+    func diarizeAudio(audioURL: URL, speakerCountHint: Int?) async -> [DiarizationSegment]? {
+        [
+            DiarizationSegment(speakerId: "a", startTime: 0.0, endTime: 1.0),
+            DiarizationSegment(speakerId: "b", startTime: 1.1, endTime: 2.2),
+        ]
+    }
+
+    func transcribeAudio(_ samples: [Float], source: AudioSource, locale: Locale) async throws -> ASRTranscriptResult {
+        callCount += 1
+        if callCount % 2 == 0 {
+            throw MockTranscriptionError()
+        }
+        return ASRTranscriptResult(text: "partial transcript", confidence: nil)
     }
 }

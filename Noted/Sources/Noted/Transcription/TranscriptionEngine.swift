@@ -1,5 +1,6 @@
 @preconcurrency import AVFoundation
 import CoreAudio
+import CoreML
 import FluidAudio
 import Observation
 import WhisperKit
@@ -54,6 +55,7 @@ final class TranscriptionEngine {
     private var micTask: Task<Void, Never>?
     private var sysTask: Task<Void, Never>?
     private var micRestartRetryTask: Task<Void, Never>?
+    private var micStartupHealthCheckTask: Task<Void, Never>?
 
     private(set) var selectedModel: TranscriptionModel = .parakeet
     private(set) var systemAudioStarted = false
@@ -62,6 +64,11 @@ final class TranscriptionEngine {
     private var asrManager: AsrManager?
     private var whisperKitBackend: WhisperKitASRBackend?
     private var sfSpeechBackend: SFSpeechBackend?
+    var diagnosticHandler: ((String) -> Void)? {
+        didSet {
+            micCapture.diagnosticHandler = diagnosticHandler
+        }
+    }
 
     private var currentMicDeviceID: AudioDeviceID = 0
     private var userSelectedDeviceID: AudioDeviceID = 0
@@ -166,9 +173,11 @@ final class TranscriptionEngine {
         followsDefaultInputDevice = inputDeviceID == 0
         userSelectedDeviceID = inputDeviceID
         currentMicDeviceID = 0
+        diagnosticHandler?("mic capture starting input_device_id=\(targetMicID ?? 0) raw_audio=\(rawMicrophoneAudioURL?.lastPathComponent ?? "<none>")")
         let micStream = micCapture.bufferStream(deviceID: targetMicID, rawAudioURL: rawMicrophoneAudioURL)
         if let captureError = micCapture.captureError {
             lastError = captureError
+            diagnosticHandler?("mic capture startup failed: \(captureError)")
             assetStatus = "Ready"
             currentRawMicrophoneAudioURL = nil
             currentMicDeviceID = 0
@@ -178,6 +187,7 @@ final class TranscriptionEngine {
         }
         currentMicDeviceID = targetMicID ?? 0
         micTask = drainMicStream(micStream)
+        scheduleMicStartupHealthCheck()
 
         if captureSystemAudio {
             do {
@@ -201,13 +211,19 @@ final class TranscriptionEngine {
         removeDefaultDeviceListener()
         let systemAudioURL = systemCapture.bufferFilePath
         micRestartRetryTask?.cancel()
+        micStartupHealthCheckTask?.cancel()
         micTask?.cancel()
         sysTask?.cancel()
         micRestartRetryTask = nil
+        micStartupHealthCheckTask = nil
         micTask = nil
         sysTask = nil
         await systemCapture.stop()
+        let micDiagnostics = micCapture.diagnosticsSnapshot()
         micCapture.stop()
+        diagnosticHandler?(
+            "mic capture summary buffers=\(micDiagnostics.bufferCount) first_buffer_seen=\(micDiagnostics.firstBufferSeen) raw_file_opened=\(micDiagnostics.rawFileOpened) write_failures=\(micDiagnostics.writeFailureCount) last_error=\(micDiagnostics.lastError ?? "<none>")"
+        )
         currentMicDeviceID = 0
         userSelectedDeviceID = 0
         followsDefaultInputDevice = false
@@ -263,6 +279,14 @@ final class TranscriptionEngine {
             throw TranscriptionEngineError.asrBackendUnavailable(lastError ?? "ASR backend unavailable.")
         }
         return try await backend.transcribe(samples, source: source)
+    }
+
+    func resetASRBackendForRetry() {
+        asrManager = nil
+        whisperKitBackend = nil
+        sfSpeechBackend = nil
+        lastError = nil
+        assetStatus = "Ready"
     }
 
     private func loadASRBackend(locale: Locale) async -> (any ASRBackend)? {
@@ -346,7 +370,7 @@ final class TranscriptionEngine {
         return "System audio capture failed: \(error.localizedDescription). Grant Screen Recording access in System Settings → Privacy & Security → Screen Recording."
     }
 
-    private func restartMic(inputDeviceID: AudioDeviceID, cancelPendingRetry: Bool = true) {
+    private func restartMic(inputDeviceID: AudioDeviceID, cancelPendingRetry: Bool = true, force: Bool = false) {
         guard isRunning else { return }
         if cancelPendingRetry {
             micRestartRetryTask?.cancel()
@@ -360,7 +384,7 @@ final class TranscriptionEngine {
 
         let targetMicID = inputDeviceID > 0 ? inputDeviceID : MicCapture.defaultInputDeviceID()
         let resolvedTarget = targetMicID ?? 0
-        guard resolvedTarget != currentMicDeviceID else { return }
+        guard force || resolvedTarget != currentMicDeviceID else { return }
 
         let resolvedName = resolvedTarget > 0
             ? (MicCapture.deviceName(for: resolvedTarget) ?? "<unknown>")
@@ -368,6 +392,7 @@ final class TranscriptionEngine {
         let switchMessage = "[MIC-SWITCH] restarting mic input_device_id=\(resolvedTarget) input_device_name=\(resolvedName) followsDefault=\(followsDefaultInputDevice)"
         print(switchMessage)
         diagLog(switchMessage)
+        diagnosticHandler?(switchMessage)
 
         micTask?.cancel()
         micTask = nil
@@ -380,6 +405,7 @@ final class TranscriptionEngine {
             let failureMessage = "[MIC-SWITCH-FAIL] \(captureError), retrying in 2s"
             print(failureMessage)
             diagLog(failureMessage)
+            diagnosticHandler?(failureMessage)
             scheduleMicRestartRetry(inputDeviceID: inputDeviceID)
             return
         }
@@ -389,6 +415,24 @@ final class TranscriptionEngine {
         micTask = drainMicStream(stream)
         if isCapturePaused {
             micCapture.pause()
+        }
+    }
+
+    private func scheduleMicStartupHealthCheck() {
+        micStartupHealthCheckTask?.cancel()
+        micStartupHealthCheckTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard let self, self.isRunning, !self.isCapturePaused else { return }
+            self.micStartupHealthCheckTask = nil
+
+            let snapshot = self.micCapture.diagnosticsSnapshot()
+            let needsRawFile = self.currentRawMicrophoneAudioURL != nil
+            guard !snapshot.firstBufferSeen || (needsRawFile && !snapshot.rawFileOpened) else { return }
+
+            self.diagnosticHandler?(
+                "mic startup health check failed buffers=\(snapshot.bufferCount) raw_file_opened=\(snapshot.rawFileOpened) last_error=\(snapshot.lastError ?? "<none>"); forcing mic restart"
+            )
+            self.restartMic(inputDeviceID: self.userSelectedDeviceID, force: true)
         }
     }
 
@@ -448,15 +492,27 @@ final class TranscriptionEngine {
     }
 
     private func makeWhisperKit(modelID: String) async throws -> WhisperKit {
+        let computeOptions = ModelComputeOptions(
+            melCompute: .cpuAndGPU,
+            audioEncoderCompute: .cpuAndGPU,
+            textDecoderCompute: .cpuAndGPU,
+            prefillCompute: .cpuOnly
+        )
+        diagnosticHandler?("WhisperKit compute units: mel=cpuAndGPU audio_encoder=cpuAndGPU text_decoder=cpuAndGPU prefill=cpuOnly model=\(modelID)")
         let modelURL = ModelCache.whisperModelURL(for: modelID)
         if FileManager.default.fileExists(atPath: modelURL.path) {
             return try await WhisperKit(
                 model: modelID,
                 downloadBase: ModelCache.whisperDownloadBaseURL(),
                 modelFolder: modelURL.path,
-                tokenizerFolder: ModelCache.whisperDownloadBaseURL()
+                tokenizerFolder: ModelCache.whisperDownloadBaseURL(),
+                computeOptions: computeOptions
             )
         }
-        return try await WhisperKit(model: modelID, downloadBase: ModelCache.whisperDownloadBaseURL())
+        return try await WhisperKit(
+            model: modelID,
+            downloadBase: ModelCache.whisperDownloadBaseURL(),
+            computeOptions: computeOptions
+        )
     }
 }

@@ -10,12 +10,30 @@ final class MicCapture: @unchecked Sendable {
     private let _muted = AtomicBool()
     private let _writerState = OSAllocatedUnfairLock<WriterState>(uncheckedState: WriterState())
     private let _rawAudioURL = OSAllocatedUnfairLock<URL?>(uncheckedState: nil)
+    private let _diagnostics = OSAllocatedUnfairLock<DiagnosticsState>(uncheckedState: DiagnosticsState())
+    var diagnosticHandler: ((String) -> Void)?
 
     private struct WriterState {
         var file: AVAudioFile?
         var converter: AVAudioConverter?
         var converterInputFormat: AVAudioFormat?
         var writeFailureCount = 0
+    }
+
+    private struct DiagnosticsState {
+        var bufferCount = 0
+        var firstBufferSeen = false
+        var rawFileOpened = false
+        var writeFailureCount = 0
+        var lastError: String?
+    }
+
+    struct DiagnosticsSnapshot: Sendable {
+        let bufferCount: Int
+        let firstBufferSeen: Bool
+        let rawFileOpened: Bool
+        let writeFailureCount: Int
+        let lastError: String?
     }
 
     var audioLevel: Float { _audioLevel.value }
@@ -35,6 +53,7 @@ final class MicCapture: @unchecked Sendable {
             self._rawAudioURL.withLock { $0 = rawAudioURL }
             if previousRawAudioURL != rawAudioURL {
                 self._writerState.withLock { $0 = WriterState() }
+                self._diagnostics.withLock { $0 = DiagnosticsState() }
             }
 
             diagLog("[MIC-1] bufferStream called, deviceID=\(String(describing: deviceID))")
@@ -56,6 +75,8 @@ final class MicCapture: @unchecked Sendable {
                 guard status == noErr else {
                     let msg = "Failed to set input device (OSStatus \(status))"
                     diagLog("[MIC-2-FAIL] \(msg)")
+                    self._diagnostics.withLock { $0.lastError = msg }
+                    self.diagnosticHandler?("mic capture failed: \(msg)")
                     errorHolder.value = msg
                     continuation.finish()
                     return
@@ -86,12 +107,19 @@ final class MicCapture: @unchecked Sendable {
             }
             let writerFormat = self._writerState.withLock { $0.file?.processingFormat }
             diagLog("[MIC-4] tapFormat: sr=\(tapFormat.sampleRate) ch=\(tapFormat.channelCount) existingWriterFormat=\(String(describing: writerFormat))")
+            self.diagnosticHandler?(
+                "mic capture format input_sr=\(inputFormat.sampleRate) input_ch=\(inputFormat.channelCount) tap_sr=\(tapFormat.sampleRate) tap_ch=\(tapFormat.channelCount)"
+            )
 
             let muted = _muted
             var tapCallCount = 0
             inputNode.installTap(onBus: 0, bufferSize: 4096, format: tapFormat) { buffer, _ in
                 guard !muted.value else { level.value = 0; return }
                 tapCallCount += 1
+                self._diagnostics.withLock { state in
+                    state.bufferCount += 1
+                    state.firstBufferSeen = true
+                }
                 let rms = Self.normalizedRMS(from: buffer)
                 level.value = min(rms * 25, 1.0)
 
@@ -101,13 +129,31 @@ final class MicCapture: @unchecked Sendable {
 
                 self._writerState.withLock { state in
                     if state.file == nil, let rawAudioURL = self._rawAudioURL.withLock({ $0 }) {
-                        state.file = try? AVAudioFile(forWriting: rawAudioURL, settings: buffer.format.settings)
+                        do {
+                            state.file = try AVAudioFile(forWriting: rawAudioURL, settings: buffer.format.settings)
+                            self._diagnostics.withLock { $0.rawFileOpened = true }
+                        } catch {
+                            state.writeFailureCount += 1
+                            let message = "Mic raw audio file open failed: \(error.localizedDescription)"
+                            self._diagnostics.withLock {
+                                $0.writeFailureCount += 1
+                                $0.lastError = message
+                            }
+                            if state.writeFailureCount <= 3 {
+                                diagLog("[MIC-FILE-OPEN-FAIL] #\(state.writeFailureCount): \(message)")
+                            }
+                            return
+                        }
                     }
                     guard let writer = state.file else { return }
                     do {
                         try Self.write(buffer, to: writer, state: &state)
                     } catch {
                         state.writeFailureCount += 1
+                        self._diagnostics.withLock {
+                            $0.writeFailureCount += 1
+                            $0.lastError = error.localizedDescription
+                        }
                         if state.writeFailureCount <= 5 || state.writeFailureCount % 100 == 0 {
                             diagLog("[MIC-WRITE-FAIL] #\(state.writeFailureCount): \(error.localizedDescription)")
                         }
@@ -133,6 +179,8 @@ final class MicCapture: @unchecked Sendable {
                 // Do NOT clear _writerState or _rawAudioURL here. The engine failed to start
                 // but the audio file is intact; clearing would cause the next successful restart
                 // to open the file for writing again (truncating it) or lose accumulated audio.
+                self._diagnostics.withLock { $0.lastError = msg }
+                self.diagnosticHandler?("mic capture engine start failed: \(msg)")
                 errorHolder.value = msg
                 continuation.finish()
             }
@@ -155,6 +203,18 @@ final class MicCapture: @unchecked Sendable {
         _writerState.withLock { $0 = WriterState() }
         _rawAudioURL.withLock { $0 = nil }
         _audioLevel.value = 0
+    }
+
+    func diagnosticsSnapshot() -> DiagnosticsSnapshot {
+        _diagnostics.withLock {
+            DiagnosticsSnapshot(
+                bufferCount: $0.bufferCount,
+                firstBufferSeen: $0.firstBufferSeen,
+                rawFileOpened: $0.rawFileOpened,
+                writeFailureCount: $0.writeFailureCount,
+                lastError: $0.lastError
+            )
+        }
     }
 
     /// Use this before a mid-session device switch. Hardware format changes can leave
